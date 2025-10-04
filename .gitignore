@@ -1,0 +1,11 @@
+﻿__pycache__/
+_XLAM/
+.venv/
+install/.env
+.env
+grant-priv.sql
+install/grant-priv.sql
+*.log
+runapp.sh
+runbot.sh
+run.sh

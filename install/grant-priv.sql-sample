@@ -1,0 +1,5 @@
+CREATE DATABASE tgringer CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER 'tgringer'@'localhost' IDENTIFIED BY 'password';
+GRANT ALL PRIVILEGES ON tgringer.* TO 'tgringer'@'localhost';
+FLUSH PRIVILEGES;

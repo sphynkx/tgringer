@@ -1,0 +1,15 @@
+[Unit]
+Description=TG Ringer Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+##User=www-data
+WorkingDirectory=/var/www/tgringer
+ExecStart=/var/www/tgringer/.venv/bin/python3 bot/bot.py
+Restart=always
+RestartSec=3
+Environment=PYTHONPATH=/var/www/tgringer
+
+[Install]
+WantedBy=multi-user.target

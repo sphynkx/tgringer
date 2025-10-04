@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Telegram WebRTC MVP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #0f1220; color: #e8e8ea; }
+    header { margin-bottom: 12px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    video { width: 100%; max-width: 480px; background: #000; border-radius: 8px; }
+    .card { background: #1a1f36; padding: 12px; border-radius: 8px; }
+    input, button, select { padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2f45; background: #0f1220; color: #e8e8ea; }
+    button.primary { background: #5b8cfe; border: none; }
+    .muted { opacity: 0.7; }
+    small { color: #9aa2b1; }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>WebRTC 1:1 MVP</h2>
+    <small>Room: <span id="roomLabel"></span></small>
+  </header>
+
+  <div class="card">
+    <div class="row">
+      <input id="roomInput" placeholder="room id" />
+      <button id="joinBtn" class="primary">Join</button>
+      <button id="hangupBtn">Hang up</button>
+      <button id="copyLinkBtn">Copy link</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <small>Grant camera/mic permissions when prompted</small>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:12px;">
+    <div class="card">
+      <h4>Local</h4>
+      <video id="localVideo" autoplay playsinline muted></video>
+    </div>
+    <div class="card">
+      <h4>Remote</h4>
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+  </div>
+
+  <script>
+    // injected by server via template rendering (fallbacks as data- attributes if needed)
+    window.APP_BASE_URL = "{{ app_base_url if app_base_url is defined else '' }}";
+    window.ICE_SERVERS = [
+      {% for u in turn_urls %}{ urls: "{{ u }}" },{% endfor %}
+      {% if has_turn %}{ urls: "{{ turn_urls[0] }}", username: "{{ '' }}", credential: "{{ '' }}" }{% endif %}
+    ];
+  </script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
