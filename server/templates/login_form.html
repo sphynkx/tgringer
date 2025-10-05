@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8" />
+  <title>Login to Tgringer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; background: #0f1220; color: #e8e8ea; }
+    .form-card { background: #1a1f36; padding: 24px; border-radius: 10px; max-width: 420px; margin: 48px auto; }
+    input, button { padding: 10px 14px; border-radius: 6px; border: 1px solid #2a2f45; background: #0f1220; color: #e8e8ea; margin-bottom: 10px; width: 100%; }
+    button { background: #5b8cfe; border: none; font-weight: bold; }
+    label { display: block; margin-bottom: 4px; }
+    h2 { margin-bottom: 22px; }
+  </style>
+</head>
+<body>
+  <div class="form-card">
+    <h2>Enter video call</h2>
+    <form method="post" action="/app">
+      <input type="hidden" name="room" value="{{ room }}">
+      <input type="hidden" name="lang" value="{{ lang }}">
+      <label>User ID (from Telegram):</label>
+      <input name="user_id" required placeholder="Telegram user_id">
+      <label>Username:</label>
+      <input name="username" placeholder="Telegram username">
+      <label>First Name:</label>
+      <input name="first_name" placeholder="First Name">
+      <label>Last Name:</label>
+      <input name="last_name" placeholder="Last Name">
+      <label>Avatar URL:</label>
+      <input name="avatar_url" placeholder="https://...">
+      <button type="submit">Enter</button>
+    </form>
+    <p style="margin-top:20px;font-size:smaller;" class="muted">
+      <b>Room:</b> {{ room }}<br>
+      <b>Language:</b> {{ lang }}
+    </p>
+  </div>
+</body>
+</html>

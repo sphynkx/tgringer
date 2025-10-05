@@ -1,6 +1,7 @@
 import aiomysql
 from bot.db.connector import DBConnector
 
+
 async def register_user(tg_user_id: int, username: str, first_name: str, last_name: str, language_code: str):
     pool = await DBConnector.get_conn()
     async with pool.acquire() as conn:
@@ -27,3 +28,22 @@ async def register_user(tg_user_id: int, username: str, first_name: str, last_na
                     (tg_user_id, username, first_name, last_name, language_code)
                 )
 
+
+async def search_users(query: str):
+    pool = await DBConnector.get_conn()
+    q = f"%{query}%"
+    sql = """
+        SELECT tg_user_id, username, first_name, last_name, avatar_url, status, language_code
+        FROM users
+        WHERE
+            username LIKE %s OR
+            first_name LIKE %s OR
+            last_name LIKE %s OR
+            CAST(tg_user_id AS CHAR) LIKE %s
+        LIMIT 20
+    """
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(sql, (q, q, q, q))
+            rows = await cur.fetchall()
+    return rows
