@@ -11,6 +11,7 @@ templates = Environment(
     autoescape=select_autoescape(['html', 'xml'])
 )
 
+
 @router.get("/app/login", response_class=HTMLResponse)
 async def login_form(request: Request, room: str = "", lang: str = "en"):
     tmpl = templates.get_template("login_form.html")

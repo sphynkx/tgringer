@@ -53,16 +53,16 @@
       {% if has_turn %}{ urls: "{{ turn_urls[0] }}", username: "{{ '' }}", credential: "{{ '' }}" }{% endif %}
     ];
 
-    // === Модификация: интерфейсная локализация и user info ===
-    // Если сервер рендерит ui_strings и user_info (например, через POST), они попадут сюда:
+    // === Modifications: UI i18n and user info ===
+    // If server renders ui_strings and user_info then they come here:
     {% if ui_strings is defined %}
       window.UI_STRINGS = {{ ui_strings | tojson }};
     {% endif %}
     {% if user_info is defined %}
       window.USER_INFO = {{ user_info | tojson }};
     {% endif %}
-    // Если нужны другие параметры для JS — добавляй их тут по аналогии
-    // === /Модификация ===
+    // Another JS params - same way
+    // === /Modifications ===
   </script>
   <script src="/static/js/main.js"></script>
 </body>

@@ -18,7 +18,7 @@ MESSAGES = {
 }
 
 def tr(key, lang="en"):
-    # key — строка вида "ui.join"
+    ## key is string like "ui.join"
     d = MESSAGES.get(lang, MESSAGES["en"])
     for part in key.split("."):
         d = d.get(part, {})

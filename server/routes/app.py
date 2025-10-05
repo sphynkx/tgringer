@@ -27,7 +27,6 @@ async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str
     if not room:
         return HTMLResponse("Room ID required", status_code=400)
 
-    # ВСЕГДА рендерим index.html — даже если user_info пустой!
     ui_strings = {
         k: tr(f"ui.{k}", user_info.get("lang", lang))
         for k in ("join", "hangup", "copy", "welcome")
@@ -47,6 +46,7 @@ async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str
     )
     return HTMLResponse(html)
 
+
 @router.post("/app", response_class=HTMLResponse)
 async def serve_app_post(
     request: Request,
@@ -58,6 +58,7 @@ async def serve_app_post(
     avatar_url: str = Form(""),
     lang: str = Form("en")
 ):
+    ## i18n it!!
     ui_strings = {
         k: tr(f"ui.{k}", lang)
         for k in ("join", "hangup", "copy", "welcome")
@@ -84,3 +85,4 @@ async def serve_app_post(
         has_turn=has_turn
     )
     return HTMLResponse(html)
+

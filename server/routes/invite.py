@@ -4,6 +4,8 @@ from server.config import APP_BASE_URL
 
 router = APIRouter()
 
+
+
 @router.get("/invite/new")
 async def new_invite():
     room_id = secrets.token_urlsafe(8)
