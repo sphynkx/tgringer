@@ -1,10 +1,9 @@
 from aiogram import Router, types, Bot, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from bot.db.users import register_user
-from bot.utils.invite import generate_room_id, build_invite_url
 from bot.db.users import search_users
 from bot.utils.invite import generate_room_id, build_invite_url
+from bot.db.users import register_user
 
 router = Router()
 
@@ -59,7 +58,7 @@ async def cmd_find(message: types.Message):
 
     for u in users:
         kb = InlineKeyboardBuilder()
-        # callback_data формат: invite:<tg_user_id>
+        # callback_data: invite:<tg_user_id>
         kb.button(
             text="🤝 Пригласить",
             callback_data=f"invite:{u['tg_user_id']}"
@@ -83,7 +82,6 @@ async def cmd_find(message: types.Message):
                 parse_mode="HTML"
             )
 
-# Хендлер для callback-кнопки "пригласить"
 @router.callback_query(F.data.startswith("invite:"))
 async def invite_callback(call: types.CallbackQuery, bot: Bot):
     target_user_id = int(call.data[len("invite:"):])

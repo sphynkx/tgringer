@@ -15,9 +15,11 @@ templates = Environment(
     autoescape=select_autoescape(['html', 'xml'])
 )
 
+
 @router.get("/health")
 async def health():
     return {"ok": True}
+
 
 @router.get("/app", response_class=HTMLResponse)
 async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str = "en"):
@@ -29,28 +31,26 @@ async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str
             user_info = {}
     if not room:
         return HTMLResponse("Room ID required", status_code=400)
-    # Если есть user_info — сразу рендерим комнату!
-    if user_info:
-        ui_strings = {
-            k: tr(f"ui.{k}", user_info.get("lang", lang))
-            for k in ("join", "hangup", "copy", "welcome")
-        }
-        app_base_url = APP_BASE_URL
-        turn_urls = []      # если есть TURN-сервера, подставь сюда свои значения
-        has_turn = False    # если TURN есть — True, иначе False
 
-        tmpl = templates.get_template("index.html")
-        html = tmpl.render(
-            room=room,
-            user_info=user_info,
-            ui_strings=ui_strings,
-            app_base_url=app_base_url,
-            turn_urls=turn_urls,
-            has_turn=has_turn
-        )
-        return HTMLResponse(html)
-    # Если user_info нет — редиректим на логин
-    return RedirectResponse(url=f"/app/login?room={room}&lang={lang}")
+    # ВСЕГДА рендерим index.html — даже если user_info пустой!
+    ui_strings = {
+        k: tr(f"ui.{k}", user_info.get("lang", lang))
+        for k in ("join", "hangup", "copy", "welcome")
+    }
+    app_base_url = APP_BASE_URL
+    turn_urls = []
+    has_turn = False
+
+    tmpl = templates.get_template("index.html")
+    html = tmpl.render(
+        room=room,
+        user_info=user_info,
+        ui_strings=ui_strings,
+        app_base_url=app_base_url,
+        turn_urls=turn_urls,
+        has_turn=has_turn
+    )
+    return HTMLResponse(html)
 
 @router.post("/app", response_class=HTMLResponse)
 async def serve_app_post(
