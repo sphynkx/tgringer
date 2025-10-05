@@ -1,4 +1,4 @@
-# Telegram WebApp WebRTC MVP (Python)
+# Telegram WebApp for video calls
 This is a lightweight app for video calls between Telegram users, powered by WebRTC. It works as a Telegram Web App and is integrated with a Telegram bot that helps invite users into the service's private network.
 
 Currently at the MVP stage, but functional.
