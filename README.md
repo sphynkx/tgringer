@@ -28,7 +28,7 @@ For web app part you need configure some domain. Example of nginx config with pr
 
 	}
 ```
-Also configure HTTPS. For example via letsencrypt (choose option 2).
+Also configure HTTPS. For example via letsencrypt (choose option `2`).
 
 
 ### Backend
