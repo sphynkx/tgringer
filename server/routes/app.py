@@ -16,11 +16,6 @@ templates = Environment(
 )
 
 
-@router.get("/health")
-async def health():
-    return {"ok": True}
-
-
 @router.get("/app", response_class=HTMLResponse)
 async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str = "en"):
     user_info = {}
