@@ -8,18 +8,19 @@
     body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #0f1220; color: #e8e8ea; }
     header { margin-bottom: 12px; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; }
-    video { width: 100%; max-width: 480px; background: #000; border-radius: 8px; }
+    video { width: 100%; max-width: 320px; background: #000; border-radius: 8px; }
     .card { background: #1a1f36; padding: 12px; border-radius: 8px; }
     input, button, select { padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2f45; background: #0f1220; color: #e8e8ea; }
     button.primary { background: #5b8cfe; border: none; }
     .muted { opacity: 0.7; }
     small { color: #9aa2b1; }
     .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+    .grid { display: flex; flex-wrap: wrap; gap: 12px; }
   </style>
 </head>
 <body>
   <header>
-    <h2>WebRTC 1:1 MVP</h2>
+    <h2>WebRTC MVP</h2>
     <small>Room: <span id="roomLabel"></span></small>
   </header>
 
@@ -40,15 +41,12 @@
     </div>
   </div>
 
-  <div class="row" style="margin-top:12px;">
-    <div class="card">
+  <div class="grid" style="margin-top:12px;">
+    <div class="card" id="localCard">
       <h4><span id="localNameLabel">Local</span></h4>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
-    <div id="remoteCard" class="card" style="display:none;">
-      <h4><span id="remoteNameLabel">Remote</span></h4>
-      <video id="remoteVideo" autoplay playsinline></video>
-    </div>
+    <div class="grid" id="remoteGrid"></div>
   </div>
 
   <script>
@@ -65,7 +63,6 @@
       window.USER_INFO = {{ user_info | tojson }};
     {% endif %}
   </script>
-  <!-- cache bust to ensure latest JS loads -->
-  <script src="/static/js/main.js?v=20251013-2"></script>
+  <script src="/static/js/main.js?v=20251013-3"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 import asyncio
 import secrets
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 
 @dataclass
@@ -21,6 +21,9 @@ class Room:
             if k != pid:
                 return p
         return None
+
+    def list_peers_except(self, pid: str) -> List[Peer]:
+        return [p for k, p in self.peers.items() if k != pid]
 
 
 class RoomManager:

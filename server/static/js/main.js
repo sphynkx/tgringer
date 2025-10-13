@@ -11,21 +11,18 @@
   const toggleAudioBtn = document.getElementById('toggleAudioBtn');
   const toggleVideoBtn = document.getElementById('toggleVideoBtn');
   const localVideo = document.getElementById('localVideo');
-  const remoteVideo = document.getElementById('remoteVideo');
   const localNameLabel = document.getElementById('localNameLabel');
-  const remoteNameLabel = document.getElementById('remoteNameLabel');
-  const remoteCard = document.getElementById('remoteCard');
+  const remoteGrid = document.getElementById('remoteGrid');
 
-  let pc = null;
   let ws = null;
   let localStream = null;
-  let peerId = null;
-  let isOfferer = false;
   let roomId = roomParam || '';
   let joined = false;
 
   let audioEnabled = true;
   let videoEnabled = true;
+
+  const peers = new Map(); // peerId -> { pc, card, video, nameLabel }
 
   const meName = (() => {
     const u = window.USER_INFO || {};
@@ -40,8 +37,6 @@
   console.debug('[APP] meName:', meName);
 
   localNameLabel.textContent = meName;
-  remoteNameLabel.textContent = 'Remote';
-  hideRemote();
 
   roomInput.value = roomId;
   roomLabel.textContent = roomId || '(none)';
@@ -53,26 +48,53 @@
 
   function getLinkForRoom(id) {
     const base = `${location.origin}${location.pathname}`;
-    const url = `${base}?room=${encodeURIComponent(id)}`;
-    return url;
+    return `${base}?room=${encodeURIComponent(id)}`;
   }
 
-  function showRemote() {
-    if (remoteCard.style.display === 'none') {
-      remoteCard.style.display = '';
-      console.debug('[APP] Remote card shown');
-    }
+  function createRemoteTile(id, name) {
+    if (peers.has(id) && peers.get(id).card) return peers.get(id).card;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.peerId = id;
+
+    const title = document.createElement('h4');
+    const nameLabel = document.createElement('span');
+    nameLabel.textContent = name || 'Remote';
+    title.appendChild(nameLabel);
+
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+
+    card.appendChild(title);
+    card.appendChild(video);
+    remoteGrid.appendChild(card);
+
+    if (!peers.has(id)) peers.set(id, {});
+    const entry = peers.get(id);
+    entry.card = card;
+    entry.video = video;
+    entry.nameLabel = nameLabel;
+    peers.set(id, entry);
+
+    console.debug('[APP] Tile created for', id, 'name=', name);
+    return card;
   }
 
-  function hideRemote() {
-    remoteCard.style.display = 'none';
-    remoteNameLabel.textContent = 'Remote';
-    if (remoteVideo.srcObject) {
+  function removeRemoteTile(id) {
+    const entry = peers.get(id);
+    if (!entry) return;
+    if (entry.video && entry.video.srcObject) {
       try {
-        remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+        entry.video.srcObject.getTracks().forEach(t => t.stop());
       } catch {}
-      remoteVideo.srcObject = null;
+      entry.video.srcObject = null;
     }
+    if (entry.card && entry.card.parentNode) {
+      entry.card.parentNode.removeChild(entry.card);
+    }
+    peers.delete(id);
+    console.debug('[APP] Tile removed for', id);
   }
 
   async function initMedia() {
@@ -93,51 +115,69 @@
     localStream.getVideoTracks().forEach(t => (t.enabled = videoEnabled));
   }
 
-  function createPeer() {
-    pc = new RTCPeerConnection({ iceServers: window.ICE_SERVERS || [{ urls: 'stun:stun.l.google.com:19302' }] });
+  function ensurePeerConnection(targetId) {
+    let entry = peers.get(targetId);
+    if (!entry) {
+      entry = {};
+      peers.set(targetId, entry);
+    }
+    if (entry.pc) return entry.pc;
 
+    const pc = new RTCPeerConnection({ iceServers: window.ICE_SERVERS || [{ urls: 'stun:stun.l.google.com:19302' }] });
     pc.onicecandidate = (e) => {
-      if (e.candidate && ws) {
-        console.debug('[APP] Send ICE:', e.candidate);
-        ws.send(JSON.stringify({ type: 'ice', data: e.candidate }));
+      if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ice', to: targetId, data: e.candidate }));
       }
     };
-
     pc.ontrack = (e) => {
-      console.debug('[APP] Got remote track:', e.streams);
-      remoteVideo.srcObject = e.streams[0];
-      showRemote();
+      createRemoteTile(targetId, entry.nameLabel ? entry.nameLabel.textContent : 'Remote');
+      const videoEl = peers.get(targetId).video;
+      videoEl.srcObject = e.streams[0];
+      console.debug('[APP] Remote track for', targetId);
     };
-
     if (localStream) {
       for (const track of localStream.getTracks()) {
         pc.addTrack(track, localStream);
       }
     }
+    entry.pc = pc;
+    peers.set(targetId, entry);
+    return pc;
   }
 
-  async function makeOffer() {
-    console.debug('[APP] Creating offer...');
+  async function makeOfferTo(targetId) {
+    const pc = ensurePeerConnection(targetId);
     const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     await pc.setLocalDescription(offer);
-    console.debug('[APP] Local description set (offer)');
-    ws.send(JSON.stringify({ type: 'offer', data: offer }));
+    ws.send(JSON.stringify({ type: 'offer', to: targetId, data: offer }));
+    console.debug('[APP] Sent offer to', targetId);
   }
 
-  async function makeAnswer(offer) {
-    console.debug('[APP] Received offer:', offer);
+  async function handleOffer(fromId, offer) {
+    const pc = ensurePeerConnection(fromId);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    console.debug('[APP] Remote description set (offer)');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    console.debug('[APP] Local description set (answer)');
-    ws.send(JSON.stringify({ type: 'answer', data: answer }));
+    ws.send(JSON.stringify({ type: 'answer', to: fromId, data: answer }));
+    console.debug('[APP] Sent answer to', fromId);
   }
 
-  async function handleAnswer(answer) {
-    console.debug('[APP] Received answer:', answer);
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    console.debug('[APP] Remote description set (answer)');
+  async function handleAnswer(fromId, answer) {
+    const entry = peers.get(fromId);
+    if (!entry || !entry.pc) return;
+    await entry.pc.setRemoteDescription(new RTCSessionDescription(answer));
+    console.debug('[APP] Applied answer from', fromId);
+  }
+
+  async function handleIce(fromId, cand) {
+    const entry = peers.get(fromId);
+    if (!entry || !entry.pc) return;
+    try {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(cand));
+      console.debug('[APP] ICE added from', fromId);
+    } catch (e) {
+      console.warn('[APP] ICE add failed from', fromId, e);
+    }
   }
 
   joinBtn.onclick = async () => {
@@ -152,7 +192,6 @@
     try {
       await initMedia();
       applyTrackStates();
-      createPeer();
 
       ws = new WebSocket(wsUrl(`/ws/${encodeURIComponent(roomId)}`));
 
@@ -164,47 +203,65 @@
 
       ws.onmessage = async (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === 'ready') {
-          if (msg.id) peerId = msg.id;
-          isOfferer = (peerId === msg.offerer);
-          console.debug('[APP] Ready. peerId:', peerId, 'isOfferer:', isOfferer, 'msg:', msg);
-          // Do not show remote yet; wait for peer-info or remote track
-          if (isOfferer) {
-            await makeOffer();
+        if (msg.type === 'peers') {
+          // I am the new peer: connect to all existing peers as offerer
+          const list = Array.isArray(msg.peers) ? msg.peers : [];
+          for (const p of list) {
+            if (p && p.id) {
+              createRemoteTile(p.id, p.name || 'Remote');
+              // Create PC and send offer
+              ensurePeerConnection(p.id);
+              await makeOfferTo(p.id);
+            }
+          }
+          console.debug('[APP] peers list:', list);
+        } else if (msg.type === 'peer-joined') {
+          // Someone new joined. Create tile and wait for their offer.
+          const pid = msg.id;
+          const pname = msg.name || 'Remote';
+          if (pid) {
+            createRemoteTile(pid, pname);
+            ensurePeerConnection(pid);
+            console.debug('[APP] peer-joined:', pid, pname);
           }
         } else if (msg.type === 'peer-info') {
-          console.debug('[APP] peer-info received:', msg);
-          if (msg.name) {
-            remoteNameLabel.textContent = msg.name;
-            showRemote();
+          // Update name label for existing tile
+          const pid = msg.id;
+          const pname = msg.name || 'Remote';
+          if (pid) {
+            createRemoteTile(pid, pname);
+            const entry = peers.get(pid);
+            if (entry && entry.nameLabel) entry.nameLabel.textContent = pname;
+            console.debug('[APP] peer-info:', pid, pname);
           }
         } else if (msg.type === 'offer') {
-          if (!pc.currentRemoteDescription) {
-            await makeAnswer(msg.data);
-          } else {
-            console.warn('[APP] Offer received, but remote description already set.');
-          }
+          await handleOffer(msg.from, msg.data);
         } else if (msg.type === 'answer') {
-          if (pc.signalingState === 'have-local-offer' && !pc.currentRemoteDescription) {
-            await handleAnswer(msg.data);
-          } else if (pc.signalingState === 'stable') {
-            console.warn('[APP] Answer received, but signaling state is stable.');
-          } else {
-            await handleAnswer(msg.data);
-          }
+          await handleAnswer(msg.from, msg.data);
         } else if (msg.type === 'ice') {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.data));
-            console.debug('[APP] ICE candidate added:', msg.data);
-          } catch (e) {
-            console.warn('[APP] addIceCandidate failed', e);
-          }
+          await handleIce(msg.from, msg.data);
         } else if (msg.type === 'peer-left') {
-          console.debug('[APP] Remote left');
-          hideRemote();
+          const pid = msg.id;
+          if (pid) {
+            const entry = peers.get(pid);
+            if (entry && entry.pc) {
+              try { entry.pc.close(); } catch {}
+            }
+            removeRemoteTile(pid);
+          }
+          console.debug('[APP] peer-left:', pid);
         } else if (msg.type === 'bye') {
-          console.debug('[APP] Received bye');
-          hangup();
+          const pid = msg.id;
+          if (pid) {
+            const entry = peers.get(pid);
+            if (entry && entry.pc) {
+              try { entry.pc.close(); } catch {}
+            }
+            removeRemoteTile(pid);
+          }
+          console.debug('[APP] bye from:', pid);
+        } else {
+          console.debug('[APP] ws msg:', msg);
         }
       };
 
@@ -224,19 +281,18 @@
       ws.send(JSON.stringify({ type: 'bye' }));
       ws.close();
     }
-    if (pc) {
-      pc.getSenders().forEach(s => {
-        try { s.track && s.track.stop(); } catch {}
-      });
-      pc.close();
-      pc = null;
+    // Close all peer connections and tiles
+    for (const [pid, entry] of peers.entries()) {
+      try { entry.pc && entry.pc.close(); } catch {}
+      removeRemoteTile(pid);
     }
+    peers.clear();
+
     if (localStream) {
       localStream.getTracks().forEach(t => t.stop());
       localStream = null;
       localVideo.srcObject = null;
     }
-    hideRemote();
     joined = false;
     audioEnabled = true;
     videoEnabled = true;
