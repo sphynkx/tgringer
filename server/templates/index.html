@@ -16,6 +16,9 @@
     small { color: #9aa2b1; }
     .controls { display: flex; gap: 8px; flex-wrap: wrap; }
     .grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; margin-right: 8px; vertical-align: middle; }
+    .owner { font-weight: 600; color: #ffd166; }
+    .title { display: flex; align-items: center; gap: 8px; }
   </style>
 </head>
 <body>
@@ -43,7 +46,10 @@
 
   <div class="grid" style="margin-top:12px;">
     <div class="card" id="localCard">
-      <h4><span id="localNameLabel">Local</span></h4>
+      <div class="title">
+        <img id="localAvatar" class="avatar" style="display:none;" />
+        <h4 style="margin:0;"><span id="localNameLabel">Local</span> <span id="localOwnerBadge" class="owner" style="display:none;">(owner)</span></h4>
+      </div>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
     <div class="grid" id="remoteGrid"></div>
@@ -63,6 +69,6 @@
       window.USER_INFO = {{ user_info | tojson }};
     {% endif %}
   </script>
-  <script src="/static/js/main.js?v=20251013-3"></script>
+  <script src="/static/js/main.js?v=20251013-4"></script>
 </body>
 </html>

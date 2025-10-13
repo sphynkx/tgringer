@@ -10,11 +10,14 @@ class Peer:
     ws: any  # WebSocket
     joined_at: float
     name: Optional[str] = None  # display name (sent by client)
+    uid: Optional[str] = None   # stable user identity (tg_user_id or client id)
+    avatar: Optional[str] = None  # avatar url if any
 
 
 @dataclass
 class Room:
     peers: Dict[str, Peer]
+    owner_uid: Optional[str] = None  # room owner identity (first user hello with uid)
 
     def other_peer(self, pid: str):
         for k, p in self.peers.items():
@@ -24,6 +27,12 @@ class Room:
 
     def list_peers_except(self, pid: str) -> List[Peer]:
         return [p for k, p in self.peers.items() if k != pid]
+
+    def find_by_uid(self, uid: str) -> Optional[Peer]:
+        for p in self.peers.values():
+            if p.uid and p.uid == uid:
+                return p
+        return None
 
 
 class RoomManager:

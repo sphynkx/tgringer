@@ -13,16 +13,15 @@ async def ws_room(websocket: WebSocket, room_id: str):
     try:
         room = await rooms.get_room(room_id)
         if room:
-            # Send the new peer a list of existing peers (with known names)
             existing = room.list_peers_except(peer.id)
             await websocket.send_json({
                 "type": "peers",
-                "peers": [{"id": p.id, "name": p.name or ""} for p in existing]
+                "owner_uid": room.owner_uid or "",
+                "peers": [{"id": p.id, "name": p.name or "", "avatar": p.avatar or "", "uid": p.uid or ""} for p in existing]
             })
-            # Notify others that a new peer joined
             for p in existing:
                 try:
-                    await p.ws.send_json({"type": "peer-joined", "id": peer.id, "name": peer.name or ""})
+                    await p.ws.send_json({"type": "peer-joined", "id": peer.id, "name": peer.name or "", "avatar": peer.avatar or "", "uid": peer.uid or ""})
                 except Exception as e:
                     print(f"[WS] failed peer-joined notify to={p.id}: {e}")
 
@@ -35,17 +34,37 @@ async def ws_room(websocket: WebSocket, room_id: str):
                 break
 
             if msg_type == "hello":
-                # Store peer display name and inform others
                 peer.name = msg.get("name") or None
-                print(f"[WS] hello room={room_id} peer={peer.id} name={peer.name}")
+                peer.uid = (msg.get("uid") or "").strip() or None
+                peer.avatar = msg.get("avatar") or None
+
+                # Enforce uniqueness by uid
+                if peer.uid:
+                    conflict = room.find_by_uid(peer.uid)
+                    if conflict and conflict.id != peer.id:
+                        # Duplicate identity detected
+                        try:
+                            await websocket.send_json({"type": "error", "code": "duplicate", "message": "Already connected"})
+                        except Exception:
+                            pass
+                        print(f"[WS] duplicate uid, closing room={room_id} uid={peer.uid} existing={conflict.id} new={peer.id}")
+                        await websocket.close()
+                        break
+
+                    # Set owner on first uid that arrives
+                    if not room.owner_uid:
+                        room.owner_uid = peer.uid
+                        print(f"[WS] owner set room={room_id} owner_uid={room.owner_uid}")
+
+                print(f"[WS] hello room={room_id} peer={peer.id} name={peer.name} uid={peer.uid}")
+                # Inform others
                 for p in room.list_peers_except(peer.id):
                     try:
-                        await p.ws.send_json({"type": "peer-info", "id": peer.id, "name": peer.name or ""})
+                        await p.ws.send_json({"type": "peer-info", "id": peer.id, "name": peer.name or "", "avatar": peer.avatar or "", "uid": peer.uid or ""})
                     except Exception as e:
                         print(f"[WS] failed to send peer-info to={p.id}: {e}")
                 continue
 
-            # Addressed signaling (mesh): offer/answer/ice carry "to"
             if msg_type in ("offer", "answer", "ice"):
                 target = msg.get("to")
                 data = msg.get("data")
@@ -60,7 +79,7 @@ async def ws_room(websocket: WebSocket, room_id: str):
                     else:
                         print(f"[WS] relay skip, unknown target room={room_id} from={peer.id} to={target}")
                 else:
-                    # Backward compatibility for 1:1 clients without "to"
+                    # 1:1 fallback for legacy clients
                     other = room.other_peer(peer.id)
                     if other:
                         try:
@@ -71,7 +90,6 @@ async def ws_room(websocket: WebSocket, room_id: str):
                 continue
 
             if msg_type == "bye":
-                # Inform everyone that this peer is hanging up
                 for p in room.list_peers_except(peer.id):
                     try:
                         await p.ws.send_json({"type": "bye", "id": peer.id})
@@ -80,12 +98,10 @@ async def ws_room(websocket: WebSocket, room_id: str):
                         print(f"[WS] failed to send bye to={p.id}: {e}")
                 continue
 
-            # Optional: ignore unknown types
             print(f"[WS] ignore msg type={msg_type} room={room_id} peer={peer.id}")
     except WebSocketDisconnect:
         print(f"[WS] disconnect room={room_id} peer={peer.id}")
     finally:
-        # Notify others about leaving
         await rooms.leave(room_id, peer.id)
         room = await rooms.get_room(room_id)
         if room:

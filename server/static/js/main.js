@@ -2,6 +2,8 @@
   const qs = new URLSearchParams(location.search);
   const roomParam = qs.get('room') || '';
   const nameParam = qs.get('n') || '';
+  const uidParam = qs.get('uid') || '';
+
   const roomInput = document.getElementById('roomInput');
   const roomLabel = document.getElementById('roomLabel');
   const joinBtn = document.getElementById('joinBtn');
@@ -10,33 +12,46 @@
   const testBtn = document.getElementById('testBtn');
   const toggleAudioBtn = document.getElementById('toggleAudioBtn');
   const toggleVideoBtn = document.getElementById('toggleVideoBtn');
+
   const localVideo = document.getElementById('localVideo');
   const localNameLabel = document.getElementById('localNameLabel');
+  const localAvatar = document.getElementById('localAvatar');
+  const localOwnerBadge = document.getElementById('localOwnerBadge');
+
   const remoteGrid = document.getElementById('remoteGrid');
 
   let ws = null;
   let localStream = null;
   let roomId = roomParam || '';
   let joined = false;
+  let connecting = false;
 
   let audioEnabled = true;
   let videoEnabled = true;
 
-  const peers = new Map(); // peerId -> { pc, card, video, nameLabel }
+  const peers = new Map(); // peerId -> { pc, card, video, nameLabel, avatarImg, name, uid, avatar }
 
+  const meInfo = window.USER_INFO || {};
   const meName = (() => {
-    const u = window.USER_INFO || {};
-    const full = [u.first_name || '', u.last_name || ''].join(' ').trim();
+    const full = [meInfo.first_name || '', meInfo.last_name || ''].join(' ').trim();
     if (full) return full;
-    if (u.username) return '@' + u.username;
+    if (meInfo.username) return '@' + meInfo.username;
     if (nameParam) return decodeURIComponent(nameParam);
     return 'Me';
   })();
+  const myUid = (meInfo.user_id ? String(meInfo.user_id) : '') || uidParam || '';
+  const myAvatar = meInfo.avatar_url || '';
 
-  console.debug('[APP] USER_INFO:', window.USER_INFO || {});
-  console.debug('[APP] meName:', meName);
+  console.debug('[APP] USER_INFO:', meInfo);
+  console.debug('[APP] meName:', meName, 'myUid:', myUid, 'myAvatar:', myAvatar);
 
   localNameLabel.textContent = meName;
+  if (myAvatar) {
+    localAvatar.src = myAvatar;
+    localAvatar.style.display = '';
+  } else {
+    localAvatar.style.display = 'none';
+  }
 
   roomInput.value = roomId;
   roomLabel.textContent = roomId || '(none)';
@@ -51,22 +66,62 @@
     return `${base}?room=${encodeURIComponent(id)}`;
   }
 
-  function createRemoteTile(id, name) {
-    if (peers.has(id) && peers.get(id).card) return peers.get(id).card;
+  function createRemoteTile(id, name, avatar, isOwner) {
+    if (peers.has(id) && peers.get(id).card) {
+      // Update labels if needed
+      const entry = peers.get(id);
+      if (name && entry.nameLabel) entry.nameLabel.textContent = name;
+      if (avatar && entry.avatarImg) {
+        entry.avatarImg.src = avatar;
+        entry.avatarImg.style.display = '';
+      }
+      if (entry.ownerBadge) {
+        entry.ownerBadge.style.display = isOwner ? '' : 'none';
+      }
+      entry.name = name || entry.name || 'Remote';
+      entry.avatar = avatar || entry.avatar || '';
+      return entry.card;
+    }
+
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset.peerId = id;
 
+    const titleBox = document.createElement('div');
+    titleBox.className = 'title';
+
+    const avatarImg = document.createElement('img');
+    avatarImg.className = 'avatar';
+    if (avatar) {
+      avatarImg.src = avatar;
+      avatarImg.style.display = '';
+    } else {
+      avatarImg.style.display = 'none';
+    }
+
     const title = document.createElement('h4');
+    title.style.margin = '0';
+
     const nameLabel = document.createElement('span');
     nameLabel.textContent = name || 'Remote';
+
+    const ownerBadge = document.createElement('span');
+    ownerBadge.className = 'owner';
+    ownerBadge.textContent = '(owner)';
+    ownerBadge.style.display = isOwner ? '' : 'none';
+
     title.appendChild(nameLabel);
+    title.appendChild(document.createTextNode(' '));
+    title.appendChild(ownerBadge);
+
+    titleBox.appendChild(avatarImg);
+    titleBox.appendChild(title);
 
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
 
-    card.appendChild(title);
+    card.appendChild(titleBox);
     card.appendChild(video);
     remoteGrid.appendChild(card);
 
@@ -75,9 +130,13 @@
     entry.card = card;
     entry.video = video;
     entry.nameLabel = nameLabel;
+    entry.avatarImg = avatarImg;
+    entry.ownerBadge = ownerBadge;
+    entry.name = name || 'Remote';
+    entry.avatar = avatar || '';
     peers.set(id, entry);
 
-    console.debug('[APP] Tile created for', id, 'name=', name);
+    console.debug('[APP] Tile created for', id, 'name=', name, 'owner=', isOwner);
     return card;
   }
 
@@ -124,17 +183,20 @@
     if (entry.pc) return entry.pc;
 
     const pc = new RTCPeerConnection({ iceServers: window.ICE_SERVERS || [{ urls: 'stun:stun.l.google.com:19302' }] });
+
     pc.onicecandidate = (e) => {
       if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ice', to: targetId, data: e.candidate }));
       }
     };
+
     pc.ontrack = (e) => {
-      createRemoteTile(targetId, entry.nameLabel ? entry.nameLabel.textContent : 'Remote');
+      createRemoteTile(targetId, entry.name || 'Remote', entry.avatar || '', !!entry.isOwner);
       const videoEl = peers.get(targetId).video;
       videoEl.srcObject = e.streams[0];
       console.debug('[APP] Remote track for', targetId);
     };
+
     if (localStream) {
       for (const track of localStream.getTracks()) {
         pc.addTrack(track, localStream);
@@ -181,10 +243,15 @@
   }
 
   joinBtn.onclick = async () => {
-    if (joined) return;
+    if (joined || connecting) return;
+    connecting = TrueSafe();
+    joinBtn.disabled = true;
+
     roomId = roomInput.value.trim();
     if (!roomId) {
       alert('Enter room id');
+      joinBtn.disabled = false;
+      connecting = false;
       return;
     }
     roomLabel.textContent = roomId;
@@ -197,41 +264,71 @@
 
       ws.onopen = () => {
         joined = true;
-        console.debug('[APP] WebSocket open, sending hello with name:', meName);
-        ws.send(JSON.stringify({ type: 'hello', name: meName, info: (window.USER_INFO || {}) }));
+        connecting = false;
+        joinBtn.disabled = true;
+        console.debug('[APP] WebSocket open, sending hello with name/uid:', meName, myUid);
+        ws.send(JSON.stringify({ type: 'hello', name: meName, uid: myUid, avatar: myAvatar, info: (window.USER_INFO || {}) }));
       };
 
       ws.onmessage = async (ev) => {
         const msg = JSON.parse(ev.data);
+        if (msg.type === 'error') {
+          console.warn('[APP] server error:', msg);
+          alert(msg.message || 'Server error');
+          return;
+        }
         if (msg.type === 'peers') {
-          // I am the new peer: connect to all existing peers as offerer
           const list = Array.isArray(msg.peers) ? msg.peers : [];
+          const ownerUid = msg.owner_uid || '';
+          // Mark local owner if matches
+          if (myUid && ownerUid && myUid === ownerUid) {
+            localOwnerBadge.style.display = '';
+          } else {
+            localOwnerBadge.style.display = 'none';
+          }
           for (const p of list) {
             if (p && p.id) {
-              createRemoteTile(p.id, p.name || 'Remote');
-              // Create PC and send offer
+              const isOwner = !!(ownerUid && p.uid && ownerUid === p.uid);
+              createRemoteTile(p.id, p.name || 'Remote', p.avatar || '', isOwner);
+              const entry = peers.get(p.id) || {};
+              entry.isOwner = isOwner;
+              entry.uid = p.uid || '';
+              entry.name = p.name || 'Remote';
+              entry.avatar = p.avatar || '';
+              peers.set(p.id, entry);
               ensurePeerConnection(p.id);
               await makeOfferTo(p.id);
             }
           }
           console.debug('[APP] peers list:', list);
         } else if (msg.type === 'peer-joined') {
-          // Someone new joined. Create tile and wait for their offer.
           const pid = msg.id;
           const pname = msg.name || 'Remote';
+          const pavatar = msg.avatar || '';
+          const puid = msg.uid || '';
+          const isOwner = false; // owner-ness will be received via peer-info if needed
           if (pid) {
-            createRemoteTile(pid, pname);
+            createRemoteTile(pid, pname, pavatar, isOwner);
+            const entry = peers.get(pid) || {};
+            entry.uid = puid;
+            entry.name = pname;
+            entry.avatar = pavatar;
+            peers.set(pid, entry);
             ensurePeerConnection(pid);
             console.debug('[APP] peer-joined:', pid, pname);
           }
         } else if (msg.type === 'peer-info') {
-          // Update name label for existing tile
           const pid = msg.id;
           const pname = msg.name || 'Remote';
+          const pavatar = msg.avatar || '';
+          const puid = msg.uid || '';
           if (pid) {
-            createRemoteTile(pid, pname);
-            const entry = peers.get(pid);
-            if (entry && entry.nameLabel) entry.nameLabel.textContent = pname;
+            const entry = peers.get(pid) || {};
+            entry.name = pname;
+            entry.avatar = pavatar || entry.avatar;
+            entry.uid = puid || entry.uid;
+            peers.set(pid, entry);
+            createRemoteTile(pid, pname, entry.avatar || '', entry.isOwner || false);
             console.debug('[APP] peer-info:', pid, pname);
           }
         } else if (msg.type === 'offer') {
@@ -268,20 +365,25 @@
       ws.onclose = () => {
         console.debug('[APP] WebSocket closed');
         ws = null;
+        joinBtn.disabled = false;
+        connecting = false;
       };
 
     } catch (e) {
       console.error(e);
       alert('Failed to join: ' + e.message);
+      joinBtn.disabled = false;
+      connecting = false;
     }
   };
+
+  function TrueSafe() { return true; }
 
   function hangup() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'bye' }));
       ws.close();
     }
-    // Close all peer connections and tiles
     for (const [pid, entry] of peers.entries()) {
       try { entry.pc && entry.pc.close(); } catch {}
       removeRemoteTile(pid);
@@ -294,8 +396,11 @@
       localVideo.srcObject = null;
     }
     joined = false;
+    connecting = false;
+    joinBtn.disabled = false;
     audioEnabled = true;
     videoEnabled = true;
+    localOwnerBadge.style.display = 'none';
     updateToggleButtons();
     console.debug('[APP] Hangup done');
   }

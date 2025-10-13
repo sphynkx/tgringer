@@ -20,19 +20,30 @@ def _display_name(u: types.User) -> str:
     return str(u.id)
 
 
-def _send_creator_links_kb(room_id: str, creator: types.User, lang: str) -> InlineKeyboardBuilder:
+async def _lookup_avatar_url(user_id: int) -> str:
+    try:
+        rows = await search_users(str(user_id))
+        if rows:
+            return rows[0].get("avatar_url") or ""
+    except Exception:
+        pass
+    return ""
+
+
+async def _send_creator_links_kb(room_id: str, creator: types.User, lang: str) -> InlineKeyboardBuilder:
+    avatar_url = await _lookup_avatar_url(creator.id)
     creator_info = {
         "user_id": creator.id,
         "username": creator.username or "",
         "first_name": creator.first_name or "",
         "last_name": creator.last_name or "",
-        "avatar_url": "",
+        "avatar_url": avatar_url,
         "lang": lang,
     }
     browser_url = build_invite_url(room_id, creator_info)
-    # Pass human-readable name to WebApp via 'n' param to show local label even without USER_INFO
+    # Pass human-readable name and uid to WebApp so it can show name and enforce uniqueness server-side
     name_param = quote(_display_name(creator))
-    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={name_param}"
+    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={name_param}&uid={creator.id}"
 
     kb = InlineKeyboardBuilder()
     kb.button(text=tr("invite.browser_url", lang=lang), url=browser_url)
@@ -78,7 +89,7 @@ async def newcall(message: types.Message):
     room_id = generate_room_id()
     state["room_id"] = room_id
 
-    kb = _send_creator_links_kb(room_id, message.from_user, state["lang"])
+    kb = await _send_creator_links_kb(room_id, message.from_user, state["lang"])
     await message.answer(
         tr("newcall.msg", room_id=room_id, lang=state["lang"]),
         reply_markup=kb.as_markup(),
@@ -99,7 +110,7 @@ async def mycall(message: types.Message):
     state = get_user_state(message.from_user.id)
     room_id = state.get("room_id")
     if room_id:
-        kb = _send_creator_links_kb(room_id, message.from_user, state["lang"])
+        kb = await _send_creator_links_kb(room_id, message.from_user, state["lang"])
         await message.answer(
             tr("mycall.current_room", room_id=room_id, lang=state["lang"]),
             reply_markup=kb.as_markup(),
@@ -117,7 +128,7 @@ async def cmd_find(message: types.Message):
         # Full /newcall behavior first
         room_id = generate_room_id()
         state["room_id"] = room_id
-        kb_room = _send_creator_links_kb(room_id, message.from_user, state["lang"])
+        kb_room = await _send_creator_links_kb(room_id, message.from_user, state["lang"])
         await message.answer(
             tr("newcall.msg", room_id=room_id, lang=state["lang"]),
             reply_markup=kb_room.as_markup(),
@@ -185,9 +196,9 @@ async def invite_callback(call: types.CallbackQuery, bot: Bot):
         "lang": u["language_code"] or "en",
     }
     browser_url = build_invite_url(room_id, user_info)
-    # WebApp: add invitee display name into 'n' param to avoid generic "Me"
+    # WebApp: include display name and stable uid of invitee
     invitee_display = f"{u['first_name'] or ''} {u['last_name'] or ''}".strip() or (f"@{u['username']}" if u["username"] else str(u["tg_user_id"]))
-    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={quote(invitee_display)}"
+    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={quote(invitee_display)}&uid={u['tg_user_id']}"
 
     inviter_name = inviter.full_name if inviter.full_name else inviter.username or str(inviter.id)
 
