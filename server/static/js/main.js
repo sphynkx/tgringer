@@ -6,8 +6,13 @@
   const joinBtn = document.getElementById('joinBtn');
   const hangupBtn = document.getElementById('hangupBtn');
   const copyLinkBtn = document.getElementById('copyLinkBtn');
+  const testBtn = document.getElementById('testBtn');
+  const toggleAudioBtn = document.getElementById('toggleAudioBtn');
+  const toggleVideoBtn = document.getElementById('toggleVideoBtn');
   const localVideo = document.getElementById('localVideo');
   const remoteVideo = document.getElementById('remoteVideo');
+  const localNameLabel = document.getElementById('localNameLabel');
+  const remoteNameLabel = document.getElementById('remoteNameLabel');
 
   let pc = null;
   let ws = null;
@@ -16,6 +21,20 @@
   let isOfferer = false;
   let roomId = roomParam || '';
   let joined = false;
+
+  let audioEnabled = true;
+  let videoEnabled = true;
+
+  const ui = window.UI_STRINGS || {};
+  const meName = (() => {
+    const u = window.USER_INFO || {};
+    const full = [u.first_name || '', u.last_name || ''].join(' ').trim();
+    if (full) return full;
+    if (u.username) return '@' + u.username;
+    return 'Me';
+  })();
+  localNameLabel.textContent = meName;
+  remoteNameLabel.textContent = 'Remote';
 
   roomInput.value = roomId;
   roomLabel.textContent = roomId || '(none)';
@@ -36,6 +55,17 @@
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.srcObject = localStream;
     console.debug('Got local media');
+  }
+
+  function updateToggleButtons() {
+    toggleAudioBtn.textContent = audioEnabled ? 'Mute mic' : 'Unmute mic';
+    toggleVideoBtn.textContent = videoEnabled ? 'Stop video' : 'Start video';
+  }
+
+  function applyTrackStates() {
+    if (!localStream) return;
+    localStream.getAudioTracks().forEach(t => (t.enabled = audioEnabled));
+    localStream.getVideoTracks().forEach(t => (t.enabled = videoEnabled));
   }
 
   function createPeer() {
@@ -95,6 +125,7 @@
 
     try {
       await initMedia();
+      applyTrackStates();
       createPeer();
 
       ws = new WebSocket(wsUrl(`/ws/${encodeURIComponent(roomId)}`));
@@ -102,30 +133,34 @@
       ws.onopen = () => {
         joined = true;
         console.debug('WebSocket open');
+        // Introduce ourselves (name) for remote label
+        ws.send(JSON.stringify({ type: 'hello', name: meName }));
       };
 
-	ws.onmessage = async (ev) => {
-		const msg = JSON.parse(ev.data);
-		if (msg.type === 'ready') {
-			if (msg.id) peerId = msg.id;
-			isOfferer = (peerId === msg.offerer);
-			console.debug('Ready. peerId:', peerId, 'isOfferer:', isOfferer, 'msg:', msg);
-			if (isOfferer) {
-				await makeOffer();
-			}
+      ws.onmessage = async (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'ready') {
+          if (msg.id) peerId = msg.id;
+          isOfferer = (peerId === msg.offerer);
+          console.debug('Ready. peerId:', peerId, 'isOfferer:', isOfferer, 'msg:', msg);
+          if (isOfferer) {
+            await makeOffer();
+          }
+        } else if (msg.type === 'peer-info') {
+          // Remote peer name arrived
+          if (msg.name) {
+            remoteNameLabel.textContent = msg.name;
+          }
         } else if (msg.type === 'offer') {
-          // Only apply offer if we haven't set remote description yet
           if (!pc.currentRemoteDescription) {
             await makeAnswer(msg.data);
           } else {
             console.warn('Offer received, but remote description already set.');
           }
         } else if (msg.type === 'answer') {
-          // Only apply answer if we already sent offer and haven't set remote description yet
           if (pc.signalingState === 'have-local-offer' && !pc.currentRemoteDescription) {
             await handleAnswer(msg.data);
           } else if (pc.signalingState === 'stable') {
-            // Sometimes answer arrives after stable, ignore.
             console.warn('Answer received, but signaling state is stable.');
           } else {
             await handleAnswer(msg.data);
@@ -138,12 +173,12 @@
             console.warn('addIceCandidate failed', e);
           }
         } else if (msg.type === 'peer-left') {
-          // remote left
           console.debug('Remote left');
           if (remoteVideo.srcObject) {
             remoteVideo.srcObject.getTracks().forEach(t => t.stop());
             remoteVideo.srcObject = null;
           }
+          remoteNameLabel.textContent = 'Remote';
         } else if (msg.type === 'bye') {
           console.debug('Received bye');
           hangup();
@@ -183,6 +218,10 @@
       remoteVideo.srcObject = null;
     }
     joined = false;
+    audioEnabled = true;
+    videoEnabled = true;
+    updateToggleButtons();
+    remoteNameLabel.textContent = 'Remote';
     console.debug('Hangup done');
   }
 
@@ -200,10 +239,31 @@
     }
   };
 
-  // Auto-fill from query
+  testBtn.onclick = async () => {
+    try {
+      await initMedia();
+      applyTrackStates();
+    } catch (e) {
+      console.error(e);
+      alert('Failed to init media: ' + e.message);
+    }
+  };
+
+  toggleAudioBtn.onclick = () => {
+    audioEnabled = !audioEnabled;
+    applyTrackStates();
+    updateToggleButtons();
+  };
+
+  toggleVideoBtn.onclick = () => {
+    videoEnabled = !videoEnabled;
+    applyTrackStates();
+    updateToggleButtons();
+  };
+
   if (roomParam) {
     roomInput.value = roomParam;
   }
 
-  // Telegram WebApp integration could be added here (read Telegram.WebApp.initData)
+  updateToggleButtons();
 })();

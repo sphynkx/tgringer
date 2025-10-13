@@ -1,14 +1,15 @@
 import asyncio
 import secrets
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 
 @dataclass
 class Peer:
     id: str
-    ws: any  ## WebSocket
+    ws: any  # WebSocket
     joined_at: float
+    name: Optional[str] = None  # display name (sent by client)
 
 
 @dataclass
@@ -50,4 +51,3 @@ class RoomManager:
     async def get_room(self, room_id: str):
         async with self.lock:
             return self.rooms.get(room_id)
-

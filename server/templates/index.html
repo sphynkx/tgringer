@@ -14,6 +14,7 @@
     button.primary { background: #5b8cfe; border: none; }
     .muted { opacity: 0.7; }
     small { color: #9aa2b1; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -28,6 +29,11 @@
       <button id="joinBtn" class="primary">Join</button>
       <button id="hangupBtn">Hang up</button>
       <button id="copyLinkBtn">Copy link</button>
+      <div class="controls">
+        <button id="testBtn">Test media</button>
+        <button id="toggleAudioBtn">Mute mic</button>
+        <button id="toggleVideoBtn">Stop video</button>
+      </div>
     </div>
     <div class="row" style="margin-top:8px;">
       <small>Grant camera/mic permissions when prompted</small>
@@ -36,33 +42,28 @@
 
   <div class="row" style="margin-top:12px;">
     <div class="card">
-      <h4>Local</h4>
+      <h4><span id="localNameLabel">Local</span></h4>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
     <div class="card">
-      <h4>Remote</h4>
+      <h4><span id="remoteNameLabel">Remote</span></h4>
       <video id="remoteVideo" autoplay playsinline></video>
     </div>
   </div>
 
   <script>
-    // injected by server via template rendering (fallbacks as data- attributes if needed)
     window.APP_BASE_URL = "{{ app_base_url if app_base_url is defined else '' }}";
     window.ICE_SERVERS = [
       {% for u in turn_urls %}{ urls: "{{ u }}" },{% endfor %}
       {% if has_turn %}{ urls: "{{ turn_urls[0] }}", username: "{{ '' }}", credential: "{{ '' }}" }{% endif %}
     ];
 
-    // === Modifications: UI i18n and user info ===
-    // If server renders ui_strings and user_info then they come here:
     {% if ui_strings is defined %}
       window.UI_STRINGS = {{ ui_strings | tojson }};
     {% endif %}
     {% if user_info is defined %}
       window.USER_INFO = {{ user_info | tojson }};
     {% endif %}
-    // Another JS params - same way
-    // === /Modifications ===
   </script>
   <script src="/static/js/main.js"></script>
 </body>
