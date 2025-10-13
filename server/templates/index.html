@@ -45,7 +45,7 @@
       <h4><span id="localNameLabel">Local</span></h4>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
-    <div class="card">
+    <div id="remoteCard" class="card" style="display:none;">
       <h4><span id="remoteNameLabel">Remote</span></h4>
       <video id="remoteVideo" autoplay playsinline></video>
     </div>
@@ -66,6 +66,6 @@
     {% endif %}
   </script>
   <!-- cache bust to ensure latest JS loads -->
-  <script src="/static/js/main.js?v=20251013-1"></script>
+  <script src="/static/js/main.js?v=20251013-2"></script>
 </body>
 </html>

@@ -185,8 +185,9 @@ async def invite_callback(call: types.CallbackQuery, bot: Bot):
         "lang": u["language_code"] or "en",
     }
     browser_url = build_invite_url(room_id, user_info)
-    # WebApp: only room id; invitee will introduce name via WS hello or via USER_INFO if present
-    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}"
+    # WebApp: add invitee display name into 'n' param to avoid generic "Me"
+    invitee_display = f"{u['first_name'] or ''} {u['last_name'] or ''}".strip() or (f"@{u['username']}" if u["username"] else str(u["tg_user_id"]))
+    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={quote(invitee_display)}"
 
     inviter_name = inviter.full_name if inviter.full_name else inviter.username or str(inviter.id)
 

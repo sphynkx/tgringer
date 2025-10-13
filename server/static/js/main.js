@@ -14,6 +14,7 @@
   const remoteVideo = document.getElementById('remoteVideo');
   const localNameLabel = document.getElementById('localNameLabel');
   const remoteNameLabel = document.getElementById('remoteNameLabel');
+  const remoteCard = document.getElementById('remoteCard');
 
   let pc = null;
   let ws = null;
@@ -40,6 +41,7 @@
 
   localNameLabel.textContent = meName;
   remoteNameLabel.textContent = 'Remote';
+  hideRemote();
 
   roomInput.value = roomId;
   roomLabel.textContent = roomId || '(none)';
@@ -53,6 +55,24 @@
     const base = `${location.origin}${location.pathname}`;
     const url = `${base}?room=${encodeURIComponent(id)}`;
     return url;
+  }
+
+  function showRemote() {
+    if (remoteCard.style.display === 'none') {
+      remoteCard.style.display = '';
+      console.debug('[APP] Remote card shown');
+    }
+  }
+
+  function hideRemote() {
+    remoteCard.style.display = 'none';
+    remoteNameLabel.textContent = 'Remote';
+    if (remoteVideo.srcObject) {
+      try {
+        remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+      } catch {}
+      remoteVideo.srcObject = null;
+    }
   }
 
   async function initMedia() {
@@ -86,6 +106,7 @@
     pc.ontrack = (e) => {
       console.debug('[APP] Got remote track:', e.streams);
       remoteVideo.srcObject = e.streams[0];
+      showRemote();
     };
 
     if (localStream) {
@@ -147,6 +168,7 @@
           if (msg.id) peerId = msg.id;
           isOfferer = (peerId === msg.offerer);
           console.debug('[APP] Ready. peerId:', peerId, 'isOfferer:', isOfferer, 'msg:', msg);
+          // Do not show remote yet; wait for peer-info or remote track
           if (isOfferer) {
             await makeOffer();
           }
@@ -154,6 +176,7 @@
           console.debug('[APP] peer-info received:', msg);
           if (msg.name) {
             remoteNameLabel.textContent = msg.name;
+            showRemote();
           }
         } else if (msg.type === 'offer') {
           if (!pc.currentRemoteDescription) {
@@ -178,11 +201,7 @@
           }
         } else if (msg.type === 'peer-left') {
           console.debug('[APP] Remote left');
-          if (remoteVideo.srcObject) {
-            remoteVideo.srcObject.getTracks().forEach(t => t.stop());
-            remoteVideo.srcObject = null;
-          }
-          remoteNameLabel.textContent = 'Remote';
+          hideRemote();
         } else if (msg.type === 'bye') {
           console.debug('[APP] Received bye');
           hangup();
@@ -217,15 +236,11 @@
       localStream = null;
       localVideo.srcObject = null;
     }
-    if (remoteVideo.srcObject) {
-      remoteVideo.srcObject.getTracks().forEach(t => t.stop());
-      remoteVideo.srcObject = null;
-    }
+    hideRemote();
     joined = false;
     audioEnabled = true;
     videoEnabled = true;
     updateToggleButtons();
-    remoteNameLabel.textContent = 'Remote';
     console.debug('[APP] Hangup done');
   }
 
