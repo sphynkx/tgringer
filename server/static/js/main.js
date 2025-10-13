@@ -26,7 +26,6 @@
   let audioEnabled = true;
   let videoEnabled = true;
 
-  const ui = window.UI_STRINGS || {};
   const meName = (() => {
     const u = window.USER_INFO || {};
     const full = [u.first_name || '', u.last_name || ''].join(' ').trim();
@@ -138,9 +137,8 @@
 
       ws.onopen = () => {
         joined = true;
-        console.debug('[APP] WebSocket open');
-        // Introduce ourselves (name) for remote label
-        ws.send(JSON.stringify({ type: 'hello', name: meName }));
+        console.debug('[APP] WebSocket open, sending hello with name:', meName);
+        ws.send(JSON.stringify({ type: 'hello', name: meName, info: (window.USER_INFO || {}) }));
       };
 
       ws.onmessage = async (ev) => {
@@ -153,7 +151,7 @@
             await makeOffer();
           }
         } else if (msg.type === 'peer-info') {
-          // Remote peer name arrived
+          console.debug('[APP] peer-info received:', msg);
           if (msg.name) {
             remoteNameLabel.textContent = msg.name;
           }

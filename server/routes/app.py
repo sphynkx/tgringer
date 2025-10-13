@@ -17,7 +17,7 @@ templates = Environment(
 
 
 @router.get("/app", response_class=HTMLResponse)
-async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str = "en"):
+async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str = "en", n: str = ""):
     user_info = {}
     if u:
         try:
@@ -26,6 +26,12 @@ async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str
             user_info = {}
     if not room:
         return HTMLResponse("Room ID required", status_code=400)
+
+    # Debug: trace incoming user_info and name param
+    try:
+        print(f"[APP] GET /app room={room} has_user_info={'yes' if user_info else 'no'} n={n}")
+    except Exception:
+        pass
 
     ui_strings = {
         k: tr(f"ui.{k}", user_info.get("lang", lang))
@@ -75,6 +81,12 @@ async def serve_app_post(
     turn_urls = []
     has_turn = False
 
+    # Debug: trace POSTed user_info
+    try:
+        print(f"[APP] POST /app room={room} user_info={user_info}")
+    except Exception:
+        pass
+
     tmpl = templates.get_template("index.html")
     html = tmpl.render(
         room=room,
@@ -85,4 +97,3 @@ async def serve_app_post(
         has_turn=has_turn
     )
     return HTMLResponse(html)
-

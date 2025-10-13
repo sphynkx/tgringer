@@ -65,6 +65,7 @@
       window.USER_INFO = {{ user_info | tojson }};
     {% endif %}
   </script>
-  <script src="/static/js/main.js"></script>
+  <!-- cache bust to ensure latest JS loads -->
+  <script src="/static/js/main.js?v=20251013-1"></script>
 </body>
 </html>
