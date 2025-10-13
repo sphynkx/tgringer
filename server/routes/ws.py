@@ -1,17 +1,15 @@
-import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.utils.rooms import RoomManager
 
 router = APIRouter()
 rooms = RoomManager()
-log = logging.getLogger("tgringer.ws")
 
 
 @router.websocket("/ws/{room_id}")
 async def ws_room(websocket: WebSocket, room_id: str):
     await websocket.accept()
     peer = await rooms.join(room_id, websocket)
-    log.info("WS: joined room=%s peer=%s", room_id, peer.id)
+    print(f"[WS] joined room={room_id} peer={peer.id}")
     try:
         room = await rooms.get_room(room_id)
         offerer_id = None
@@ -22,14 +20,14 @@ async def ws_room(websocket: WebSocket, room_id: str):
             offerer_id = sorted_peers[0].id
             for p in room.peers.values():
                 await p.ws.send_json({"type": "ready", "id": p.id, "offerer": offerer_id})
-            log.info("WS: ready broadcast room=%s offerer=%s", room_id, offerer_id)
+            print(f"[WS] ready broadcast room={room_id} offerer={offerer_id}")
 
         while True:
             msg = await websocket.receive_json()
             msg_type = msg.get("type")
             room = await rooms.get_room(room_id)
             if not room:
-                log.info("WS: room missing room=%s peer=%s", room_id, peer.id)
+                print(f"[WS] room missing room={room_id} peer={peer.id}")
                 break
 
             other = room.other_peer(peer.id)
@@ -37,6 +35,7 @@ async def ws_room(websocket: WebSocket, room_id: str):
             if msg_type == "hello":
                 # Store peer display name and forward to the other peer
                 peer.name = msg.get("name") or None
+                print(f"[WS] hello room={room_id} peer={peer.id} name={peer.name}")
                 if other:
                     try:
                         await other.ws.send_json({
@@ -44,14 +43,14 @@ async def ws_room(websocket: WebSocket, room_id: str):
                             "id": peer.id,
                             "name": peer.name or ""
                         })
-                        log.info("WS: forwarded peer-info room=%s from=%s to=%s name=%s",
-                                 room_id, peer.id, other.id, peer.name)
+                        print(f"[WS] forwarded peer-info room={room_id} from={peer.id} to={other.id} name={peer.name}")
                     except Exception as e:
-                        log.warning("WS: failed to send peer-info: %s", e)
+                        print(f"[WS] failed to send peer-info: {e}")
                 continue
 
             if not other:
-                log.debug("WS: no other yet in room=%s peer=%s msg=%s", room_id, peer.id, msg_type)
+                # Waiting for the second peer
+                print(f"[WS] no other yet room={room_id} peer={peer.id} msg={msg_type}")
                 continue
 
             if msg_type in ("offer", "answer", "ice"):
@@ -60,12 +59,12 @@ async def ws_room(websocket: WebSocket, room_id: str):
                     "from": peer.id,
                     "data": msg.get("data")
                 })
-                log.debug("WS: relay %s room=%s from=%s to=%s", msg_type, room_id, peer.id, other.id)
+                print(f"[WS] relay {msg_type} room={room_id} from={peer.id} to={other.id}")
             elif msg_type == "bye":
                 await other.ws.send_json({"type": "bye"})
-                log.info("WS: bye room=%s from=%s to=%s", room_id, peer.id, other.id)
+                print(f"[WS] bye room={room_id} from={peer.id} to={other.id}")
     except WebSocketDisconnect:
-        log.info("WS: disconnect room=%s peer=%s", room_id, peer.id)
+        print(f"[WS] disconnect room={room_id} peer={peer.id}")
     finally:
         await rooms.leave(room_id, peer.id)
         room = await rooms.get_room(room_id)
@@ -74,6 +73,6 @@ async def ws_room(websocket: WebSocket, room_id: str):
             if other:
                 try:
                     await other.ws.send_json({"type": "peer-left"})
-                    log.info("WS: peer-left room=%s from=%s to=%s", room_id, peer.id, other.id)
+                    print(f"[WS] peer-left room={room_id} from={peer.id} to={other.id}")
                 except Exception as e:
-                    log.warning("WS: failed to send peer-left: %s", e)
+                    print(f"[WS] failed to send peer-left: {e}")

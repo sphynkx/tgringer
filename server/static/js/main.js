@@ -1,6 +1,7 @@
 (() => {
   const qs = new URLSearchParams(location.search);
   const roomParam = qs.get('room') || '';
+  const nameParam = qs.get('n') || '';
   const roomInput = document.getElementById('roomInput');
   const roomLabel = document.getElementById('roomLabel');
   const joinBtn = document.getElementById('joinBtn');
@@ -31,8 +32,13 @@
     const full = [u.first_name || '', u.last_name || ''].join(' ').trim();
     if (full) return full;
     if (u.username) return '@' + u.username;
+    if (nameParam) return decodeURIComponent(nameParam);
     return 'Me';
   })();
+
+  console.debug('[APP] USER_INFO:', window.USER_INFO || {});
+  console.debug('[APP] meName:', meName);
+
   localNameLabel.textContent = meName;
   remoteNameLabel.textContent = 'Remote';
 
@@ -54,7 +60,7 @@
     if (localStream) return;
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.srcObject = localStream;
-    console.debug('Got local media');
+    console.debug('[APP] Got local media');
   }
 
   function updateToggleButtons() {
@@ -73,13 +79,13 @@
 
     pc.onicecandidate = (e) => {
       if (e.candidate && ws) {
-        console.debug('Send ICE:', e.candidate);
+        console.debug('[APP] Send ICE:', e.candidate);
         ws.send(JSON.stringify({ type: 'ice', data: e.candidate }));
       }
     };
 
     pc.ontrack = (e) => {
-      console.debug('Got remote track:', e.streams);
+      console.debug('[APP] Got remote track:', e.streams);
       remoteVideo.srcObject = e.streams[0];
     };
 
@@ -91,27 +97,27 @@
   }
 
   async function makeOffer() {
-    console.debug('Creating offer...');
+    console.debug('[APP] Creating offer...');
     const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     await pc.setLocalDescription(offer);
-    console.debug('Local description set (offer)');
+    console.debug('[APP] Local description set (offer)');
     ws.send(JSON.stringify({ type: 'offer', data: offer }));
   }
 
   async function makeAnswer(offer) {
-    console.debug('Received offer:', offer);
+    console.debug('[APP] Received offer:', offer);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    console.debug('Remote description set (offer)');
+    console.debug('[APP] Remote description set (offer)');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    console.debug('Local description set (answer)');
+    console.debug('[APP] Local description set (answer)');
     ws.send(JSON.stringify({ type: 'answer', data: answer }));
   }
 
   async function handleAnswer(answer) {
-    console.debug('Received answer:', answer);
+    console.debug('[APP] Received answer:', answer);
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    console.debug('Remote description set (answer)');
+    console.debug('[APP] Remote description set (answer)');
   }
 
   joinBtn.onclick = async () => {
@@ -132,7 +138,7 @@
 
       ws.onopen = () => {
         joined = true;
-        console.debug('WebSocket open');
+        console.debug('[APP] WebSocket open');
         // Introduce ourselves (name) for remote label
         ws.send(JSON.stringify({ type: 'hello', name: meName }));
       };
@@ -142,7 +148,7 @@
         if (msg.type === 'ready') {
           if (msg.id) peerId = msg.id;
           isOfferer = (peerId === msg.offerer);
-          console.debug('Ready. peerId:', peerId, 'isOfferer:', isOfferer, 'msg:', msg);
+          console.debug('[APP] Ready. peerId:', peerId, 'isOfferer:', isOfferer, 'msg:', msg);
           if (isOfferer) {
             await makeOffer();
           }
@@ -155,38 +161,38 @@
           if (!pc.currentRemoteDescription) {
             await makeAnswer(msg.data);
           } else {
-            console.warn('Offer received, but remote description already set.');
+            console.warn('[APP] Offer received, but remote description already set.');
           }
         } else if (msg.type === 'answer') {
           if (pc.signalingState === 'have-local-offer' && !pc.currentRemoteDescription) {
             await handleAnswer(msg.data);
           } else if (pc.signalingState === 'stable') {
-            console.warn('Answer received, but signaling state is stable.');
+            console.warn('[APP] Answer received, but signaling state is stable.');
           } else {
             await handleAnswer(msg.data);
           }
         } else if (msg.type === 'ice') {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(msg.data));
-            console.debug('ICE candidate added:', msg.data);
+            console.debug('[APP] ICE candidate added:', msg.data);
           } catch (e) {
-            console.warn('addIceCandidate failed', e);
+            console.warn('[APP] addIceCandidate failed', e);
           }
         } else if (msg.type === 'peer-left') {
-          console.debug('Remote left');
+          console.debug('[APP] Remote left');
           if (remoteVideo.srcObject) {
             remoteVideo.srcObject.getTracks().forEach(t => t.stop());
             remoteVideo.srcObject = null;
           }
           remoteNameLabel.textContent = 'Remote';
         } else if (msg.type === 'bye') {
-          console.debug('Received bye');
+          console.debug('[APP] Received bye');
           hangup();
         }
       };
 
       ws.onclose = () => {
-        console.debug('WebSocket closed');
+        console.debug('[APP] WebSocket closed');
         ws = null;
       };
 
@@ -222,7 +228,7 @@
     videoEnabled = true;
     updateToggleButtons();
     remoteNameLabel.textContent = 'Remote';
-    console.debug('Hangup done');
+    console.debug('[APP] Hangup done');
   }
 
   hangupBtn.onclick = () => hangup();

@@ -6,8 +6,18 @@ from bot.utils.invite import generate_room_id, build_invite_url
 from bot.db.users import register_user
 from bot.utils.userstate import get_user_state
 from bot.i18n.messages import tr
+from urllib.parse import quote
 
 router = Router()
+
+
+def _display_name(u: types.User) -> str:
+    first_last = f"{u.first_name or ''} {u.last_name or ''}".strip()
+    if first_last:
+        return first_last
+    if u.username:
+        return f"@{u.username}"
+    return str(u.id)
 
 
 def _send_creator_links_kb(room_id: str, creator: types.User, lang: str) -> InlineKeyboardBuilder:
@@ -20,7 +30,9 @@ def _send_creator_links_kb(room_id: str, creator: types.User, lang: str) -> Inli
         "lang": lang,
     }
     browser_url = build_invite_url(room_id, creator_info)
-    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}"
+    # Pass human-readable name to WebApp via 'n' param to show local label even without USER_INFO
+    name_param = quote(_display_name(creator))
+    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={name_param}"
 
     kb = InlineKeyboardBuilder()
     kb.button(text=tr("invite.browser_url", lang=lang), url=browser_url)
@@ -173,6 +185,7 @@ async def invite_callback(call: types.CallbackQuery, bot: Bot):
         "lang": u["language_code"] or "en",
     }
     browser_url = build_invite_url(room_id, user_info)
+    # WebApp: only room id; invitee will introduce name via WS hello or via USER_INFO if present
     webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}"
 
     inviter_name = inviter.full_name if inviter.full_name else inviter.username or str(inviter.id)
