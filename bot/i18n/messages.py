@@ -46,6 +46,12 @@ MESSAGES = {
             "invite": "🤝 Invite",
             "status": "Status",
         },
+        "status": {
+            "online": "online",
+            "last_seen.min": "last seen {m} min ago",
+            "last_seen.hour": "last seen {h} h ago",
+            "last_seen.day": "last seen {d} d ago",
+        },
         "invite": {
             "no_room": "You haven't active room. Enter /newcall.",
             "no_members": "Members not found.",
@@ -92,6 +98,12 @@ MESSAGES = {
             "no_members": "Участники не найдены.",
             "invite": "🤝 Пригласить",
             "status": "Статус",
+        },
+        "status": {
+            "online": "онлайн",
+            "last_seen.min": "был(а) {m} мин назад",
+            "last_seen.hour": "был(а) {h} ч назад",
+            "last_seen.day": "был(а) {d} д назад",
         },
         "invite": {
             "no_room": "У Вас нет активной комнаты. Введите /newcall.",

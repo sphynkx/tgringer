@@ -13,7 +13,7 @@ async def register_user(tg_user_id: int, username: str, first_name: str, last_na
             )
             res = await cur.fetchone()
             if res:
-                ## Update last_seen (recheck - maybe not update!!)
+                ## Update last_seen
                 await cur.execute(
                     "UPDATE users SET last_seen=NOW() WHERE tg_user_id=%s",
                     (tg_user_id,)
@@ -33,7 +33,7 @@ async def search_users(query: str):
     pool = await DBConnector.get_conn()
     q = f"%{query}%"
     sql = """
-        SELECT tg_user_id, username, first_name, last_name, avatar_url, status, language_code
+        SELECT tg_user_id, username, first_name, last_name, avatar_url, status, language_code, last_seen
         FROM users
         WHERE
             username LIKE %s OR
@@ -52,6 +52,8 @@ async def search_users(query: str):
 async def set_avatar_url(tg_user_id: int, avatar_url: str):
     """
     Persist cached avatar URL for the user into DB.
+    The avatar_url should typically be a relative web path like '/static/avatars/<id>.jpg'
+    (web client will consume it directly; the bot will convert to absolute via APP_BASE_URL when sending).
     """
     pool = await DBConnector.get_conn()
     async with pool.acquire() as conn:
