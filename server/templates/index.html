@@ -16,14 +16,23 @@
     small { color: #9aa2b1; }
     .controls { display: flex; gap: 8px; flex-wrap: wrap; }
     .grid { display: flex; flex-wrap: wrap; gap: 12px; }
-    .avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; margin-right: 8px; vertical-align: middle; }
+
+    /* Avatar block (image or initials) */
+    .avatar-wrap { width: 28px; height: 28px; position: relative; flex: 0 0 28px; }
+    .avatar-img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; display: none; }
+    .avatar-initials {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: none; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 600; color: #0f1220; user-select: none;
+    }
+
     .owner { font-weight: 600; color: #ffd166; }
     .title { display: flex; align-items: center; gap: 8px; }
   </style>
 </head>
 <body>
   <header>
-    <h2>WebRTC MVP</h2>
+    <h2>TG Ringer</h2>
     <small>Room: <span id="roomLabel"></span></small>
   </header>
 
@@ -47,8 +56,14 @@
   <div class="grid" style="margin-top:12px;">
     <div class="card" id="localCard">
       <div class="title">
-        <img id="localAvatar" class="avatar" style="display:none;" />
-        <h4 style="margin:0;"><span id="localNameLabel">Local</span> <span id="localOwnerBadge" class="owner" style="display:none;">(owner)</span></h4>
+        <div class="avatar-wrap">
+          <img id="localAvatarImg" class="avatar-img" />
+          <div id="localAvatarInitials" class="avatar-initials"></div>
+        </div>
+        <h4 style="margin:0;">
+          <span id="localNameLabel">Local</span>
+          <span id="localOwnerBadge" class="owner" style="display:none;">(owner)</span>
+        </h4>
       </div>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
@@ -69,6 +84,7 @@
       window.USER_INFO = {{ user_info | tojson }};
     {% endif %}
   </script>
-  <script src="/static/js/main.js?v=20251013-4"></script>
+  <!-- bump cache-bust to force JS reload -->
+  <script src="/static/js/main.js?v=20251013-10"></script>
 </body>
 </html>

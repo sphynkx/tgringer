@@ -21,7 +21,14 @@ async def ws_room(websocket: WebSocket, room_id: str):
             })
             for p in existing:
                 try:
-                    await p.ws.send_json({"type": "peer-joined", "id": peer.id, "name": peer.name or "", "avatar": peer.avatar or "", "uid": peer.uid or ""})
+                    await p.ws.send_json({
+                        "type": "peer-joined",
+                        "id": peer.id,
+                        "name": peer.name or "",
+                        "avatar": peer.avatar or "",
+                        "uid": peer.uid or "",
+                        "owner_uid": room.owner_uid or ""
+                    })
                 except Exception as e:
                     print(f"[WS] failed peer-joined notify to={p.id}: {e}")
 
@@ -37,30 +44,30 @@ async def ws_room(websocket: WebSocket, room_id: str):
                 peer.name = msg.get("name") or None
                 peer.uid = (msg.get("uid") or "").strip() or None
                 peer.avatar = msg.get("avatar") or None
+                is_owner = bool(msg.get("is_owner"))
 
-                # Enforce uniqueness by uid
-                if peer.uid:
-                    conflict = room.find_by_uid(peer.uid)
-                    if conflict and conflict.id != peer.id:
-                        # Duplicate identity detected
+                ## Assign owner only if explicitly claimed by creator link and not yet set
+                if is_owner and peer.uid and not room.owner_uid:
+                    room.owner_uid = peer.uid
+                    print(f"[WS] owner set room={room_id} owner_uid={room.owner_uid}")
+                    ## Notify all peers about owner selection
+                    for p in room.peers.values():
                         try:
-                            await websocket.send_json({"type": "error", "code": "duplicate", "message": "Already connected"})
-                        except Exception:
-                            pass
-                        print(f"[WS] duplicate uid, closing room={room_id} uid={peer.uid} existing={conflict.id} new={peer.id}")
-                        await websocket.close()
-                        break
+                            await p.ws.send_json({"type": "owner-set", "owner_uid": room.owner_uid})
+                        except Exception as e:
+                            print(f"[WS] failed to send owner-set to={p.id}: {e}")
 
-                    # Set owner on first uid that arrives
-                    if not room.owner_uid:
-                        room.owner_uid = peer.uid
-                        print(f"[WS] owner set room={room_id} owner_uid={room.owner_uid}")
-
-                print(f"[WS] hello room={room_id} peer={peer.id} name={peer.name} uid={peer.uid}")
-                # Inform others
+                print(f"[WS] hello room={room_id} peer={peer.id} name={peer.name} uid={peer.uid} is_owner={is_owner}")
+                ## Inform others about this peer info
                 for p in room.list_peers_except(peer.id):
                     try:
-                        await p.ws.send_json({"type": "peer-info", "id": peer.id, "name": peer.name or "", "avatar": peer.avatar or "", "uid": peer.uid or ""})
+                        await p.ws.send_json({
+                            "type": "peer-info",
+                            "id": peer.id,
+                            "name": peer.name or "",
+                            "avatar": peer.avatar or "",
+                            "uid": peer.uid or ""
+                        })
                     except Exception as e:
                         print(f"[WS] failed to send peer-info to={p.id}: {e}")
                 continue
@@ -79,7 +86,6 @@ async def ws_room(websocket: WebSocket, room_id: str):
                     else:
                         print(f"[WS] relay skip, unknown target room={room_id} from={peer.id} to={target}")
                 else:
-                    # 1:1 fallback for legacy clients
                     other = room.other_peer(peer.id)
                     if other:
                         try:
@@ -111,3 +117,4 @@ async def ws_room(websocket: WebSocket, room_id: str):
                     print(f"[WS] peer-left room={room_id} from={peer.id} to={p.id}")
                 except Exception as e:
                     print(f"[WS] failed to send peer-left to={p.id}: {e}")
+

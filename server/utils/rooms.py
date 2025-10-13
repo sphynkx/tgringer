@@ -7,17 +7,17 @@ from typing import Dict, Optional, List
 @dataclass
 class Peer:
     id: str
-    ws: any  # WebSocket
+    ws: any  ## WebSocket
     joined_at: float
-    name: Optional[str] = None  # display name (sent by client)
-    uid: Optional[str] = None   # stable user identity (tg_user_id or client id)
-    avatar: Optional[str] = None  # avatar url if any
+    name: Optional[str] = None  ## display name (sent by client)
+    uid: Optional[str] = None   ## stable user identity (tg_user_id or client id)
+    avatar: Optional[str] = None  ## avatar url if any
 
 
 @dataclass
 class Room:
     peers: Dict[str, Peer]
-    owner_uid: Optional[str] = None  # room owner identity (first user hello with uid)
+    owner_uid: Optional[str] = None  ## room owner identity (first user hello with uid)
 
     def other_peer(self, pid: str):
         for k, p in self.peers.items():
@@ -63,3 +63,4 @@ class RoomManager:
     async def get_room(self, room_id: str):
         async with self.lock:
             return self.rooms.get(room_id)
+

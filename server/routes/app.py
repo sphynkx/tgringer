@@ -27,7 +27,7 @@ async def serve_app_get(request: Request, room: str = "", u: str = "", lang: str
     if not room:
         return HTMLResponse("Room ID required", status_code=400)
 
-    # Debug: trace incoming user_info and name param
+    ## Debug: trace incoming user_info and name param
     try:
         print(f"[APP] GET /app room={room} has_user_info={'yes' if user_info else 'no'} n={n}")
     except Exception:
@@ -81,7 +81,7 @@ async def serve_app_post(
     turn_urls = []
     has_turn = False
 
-    # Debug: trace POSTed user_info
+    ## Debug: trace POSTed user_info
     try:
         print(f"[APP] POST /app room={room} user_info={user_info}")
     except Exception:
@@ -97,3 +97,4 @@ async def serve_app_post(
         has_turn=has_turn
     )
     return HTMLResponse(html)
+

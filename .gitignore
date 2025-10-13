@@ -9,3 +9,5 @@ install/grant-priv.sql
 runapp.sh
 runbot.sh
 run.sh
+server/static/avatars/*
+!server/static/avatars/.gitkeep

@@ -1,17 +1,21 @@
+from urllib.parse import quote
+
 from aiogram import Router, types, Bot, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from bot.db.users import search_users
+
+from bot.db.users import search_users, register_user
 from bot.utils.invite import generate_room_id, build_invite_url
-from bot.db.users import register_user
 from bot.utils.userstate import get_user_state
+from bot.utils.avatars import ensure_user_avatar_cached
 from bot.i18n.messages import tr
-from urllib.parse import quote
+from bot.config import APP_BASE_URL
 
 router = Router()
 
 
 def _display_name(u: types.User) -> str:
+    """Return best available display name for user."""
     first_last = f"{u.first_name or ''} {u.last_name or ''}".strip()
     if first_last:
         return first_last
@@ -20,30 +24,43 @@ def _display_name(u: types.User) -> str:
     return str(u.id)
 
 
-async def _lookup_avatar_url(user_id: int) -> str:
-    try:
-        rows = await search_users(str(user_id))
-        if rows:
-            return rows[0].get("avatar_url") or ""
-    except Exception:
-        pass
-    return ""
+def _abs_url(url: str | None) -> str | None:
+    """
+    Convert relative '/static/...' to absolute 'https://host/static/...'
+    for Telegram API photo sending. Returns None if url is falsy.
+    """
+    if not url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/"):
+        return f"{APP_BASE_URL.rstrip('/')}{url}"
+    return url
 
 
-async def _send_creator_links_kb(room_id: str, creator: types.User, lang: str) -> InlineKeyboardBuilder:
-    avatar_url = await _lookup_avatar_url(creator.id)
+async def _send_creator_links_kb(message: types.Message, lang: str, room_id: str) -> InlineKeyboardBuilder:
+    bot: Bot = message.bot  ## type: ignore
+    ## Ensure avatar is cached locally to serve as static file
+    avatar_url = await ensure_user_avatar_cached(bot, message.from_user.id)
+
     creator_info = {
-        "user_id": creator.id,
-        "username": creator.username or "",
-        "first_name": creator.first_name or "",
-        "last_name": creator.last_name or "",
-        "avatar_url": avatar_url,
+        "user_id": message.from_user.id,
+        "username": message.from_user.username or "",
+        "first_name": message.from_user.first_name or "",
+        "last_name": message.from_user.last_name or "",
+        "avatar_url": avatar_url,  ## relative path is fine for web client
         "lang": lang,
     }
-    browser_url = build_invite_url(room_id, creator_info)
-    # Pass human-readable name and uid to WebApp so it can show name and enforce uniqueness server-side
-    name_param = quote(_display_name(creator))
-    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={name_param}&uid={creator.id}"
+
+    ## Browser link: include user_info and owner flag (creator is room owner)
+    browser_url = build_invite_url(room_id, creator_info) + "&owner=1"
+
+    ## WebApp link: include name/uid/avatar and owner=1
+    base_app = f"{APP_BASE_URL.rstrip('/')}/app"
+    name_param = quote(_display_name(message.from_user))
+    webapp_url = f"{base_app}?room={room_id}&n={name_param}&uid={message.from_user.id}&owner=1"
+    if avatar_url:
+        webapp_url += f"&a={quote(avatar_url)}"
 
     kb = InlineKeyboardBuilder()
     kb.button(text=tr("invite.browser_url", lang=lang), url=browser_url)
@@ -89,7 +106,7 @@ async def newcall(message: types.Message):
     room_id = generate_room_id()
     state["room_id"] = room_id
 
-    kb = await _send_creator_links_kb(room_id, message.from_user, state["lang"])
+    kb = await _send_creator_links_kb(message, state["lang"], room_id)
     await message.answer(
         tr("newcall.msg", room_id=room_id, lang=state["lang"]),
         reply_markup=kb.as_markup(),
@@ -110,7 +127,7 @@ async def mycall(message: types.Message):
     state = get_user_state(message.from_user.id)
     room_id = state.get("room_id")
     if room_id:
-        kb = await _send_creator_links_kb(room_id, message.from_user, state["lang"])
+        kb = await _send_creator_links_kb(message, state["lang"], room_id)
         await message.answer(
             tr("mycall.current_room", room_id=room_id, lang=state["lang"]),
             reply_markup=kb.as_markup(),
@@ -125,10 +142,9 @@ async def cmd_find(message: types.Message):
     state = get_user_state(message.from_user.id)
     room_id = state.get("room_id")
     if not room_id:
-        # Full /newcall behavior first
         room_id = generate_room_id()
         state["room_id"] = room_id
-        kb_room = await _send_creator_links_kb(room_id, message.from_user, state["lang"])
+        kb_room = await _send_creator_links_kb(message, state["lang"], room_id)
         await message.answer(
             tr("newcall.msg", room_id=room_id, lang=state["lang"]),
             reply_markup=kb_room.as_markup(),
@@ -156,9 +172,11 @@ async def cmd_find(message: types.Message):
             f"@{u['username'] or '-'}\n"
             f"{tr('find.invite', lang=state['lang'])}: {u['status'] or '-'}"
         )
-        if u["avatar_url"]:
+
+        photo_url = _abs_url(u.get("avatar_url"))
+        if photo_url:
             await message.answer_photo(
-                photo=u["avatar_url"],
+                photo=photo_url,
                 caption=caption,
                 reply_markup=kb.as_markup(),
                 parse_mode="HTML"
@@ -192,13 +210,19 @@ async def invite_callback(call: types.CallbackQuery, bot: Bot):
         "username": u["username"],
         "first_name": u["first_name"],
         "last_name": u["last_name"],
-        "avatar_url": u["avatar_url"],
+        "avatar_url": u["avatar_url"],  ## relative path is fine for web client
         "lang": u["language_code"] or "en",
     }
+
+    ## Browser link with user_info
     browser_url = build_invite_url(room_id, user_info)
-    # WebApp: include display name and stable uid of invitee
+
+    ## WebApp link
+    base_app = f"{APP_BASE_URL.rstrip('/')}/app"
     invitee_display = f"{u['first_name'] or ''} {u['last_name'] or ''}".strip() or (f"@{u['username']}" if u["username"] else str(u["tg_user_id"]))
-    webapp_url = f"https://tgringer.sphynkx.org.ua/app?room={room_id}&n={quote(invitee_display)}&uid={u['tg_user_id']}"
+    webapp_url = f"{base_app}?room={room_id}&n={quote(invitee_display)}&uid={u['tg_user_id']}"
+    if u["avatar_url"]:
+        webapp_url += f"&a={quote(u['avatar_url'])}"
 
     inviter_name = inviter.full_name if inviter.full_name else inviter.username or str(inviter.id)
 
@@ -214,10 +238,11 @@ async def invite_callback(call: types.CallbackQuery, bot: Bot):
     kb.button(text=tr("invite.webapp_url", lang=state["lang"]), web_app=types.WebAppInfo(url=webapp_url))
 
     try:
-        if u["avatar_url"]:
+        photo_url = _abs_url(u.get("avatar_url"))
+        if photo_url:
             await bot.send_photo(
                 u["tg_user_id"],
-                photo=u["avatar_url"],
+                photo=photo_url,
                 caption=text,
                 reply_markup=kb.as_markup(),
                 parse_mode="HTML"
@@ -232,3 +257,4 @@ async def invite_callback(call: types.CallbackQuery, bot: Bot):
         await call.answer(tr("invite.sent", lang=state["lang"]), show_alert=True)
     except Exception as ex:
         await call.answer(f"{tr('invite.sent', lang=state['lang'])}: {ex}", show_alert=True)
+

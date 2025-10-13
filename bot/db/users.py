@@ -47,3 +47,17 @@ async def search_users(query: str):
             await cur.execute(sql, (q, q, q, q))
             rows = await cur.fetchall()
     return rows
+
+
+async def set_avatar_url(tg_user_id: int, avatar_url: str):
+    """
+    Persist cached avatar URL for the user into DB.
+    """
+    pool = await DBConnector.get_conn()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET avatar_url=%s WHERE tg_user_id=%s",
+                (avatar_url, tg_user_id)
+            )
+

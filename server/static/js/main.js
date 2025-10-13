@@ -3,6 +3,8 @@
   const roomParam = qs.get('room') || '';
   const nameParam = qs.get('n') || '';
   const uidParam = qs.get('uid') || '';
+  const avatarParam = qs.get('a') || '';
+  const ownerParam = qs.get('owner') || '';
 
   const roomInput = document.getElementById('roomInput');
   const roomLabel = document.getElementById('roomLabel');
@@ -15,8 +17,9 @@
 
   const localVideo = document.getElementById('localVideo');
   const localNameLabel = document.getElementById('localNameLabel');
-  const localAvatar = document.getElementById('localAvatar');
   const localOwnerBadge = document.getElementById('localOwnerBadge');
+  const localAvatarImg = document.getElementById('localAvatarImg');
+  const localAvatarInitials = document.getElementById('localAvatarInitials');
 
   const remoteGrid = document.getElementById('remoteGrid');
 
@@ -29,7 +32,13 @@
   let audioEnabled = true;
   let videoEnabled = true;
 
-  const peers = new Map(); // peerId -> { pc, card, video, nameLabel, avatarImg, name, uid, avatar }
+  // Map: peerId -> { pc, card, video, nameLabel, avatarImg, avatarInitials, name, uid, avatar, isOwner }
+  const peers = new Map();
+
+  const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const initUser = tg && tg.initDataUnsafe ? (tg.initDataUnsafe.user || null) : null;
+  const initUid = initUser && initUser.id ? String(initUser.id) : '';
+  const initPhoto = initUser && initUser.photo_url ? initUser.photo_url : '';
 
   const meInfo = window.USER_INFO || {};
   const meName = (() => {
@@ -39,19 +48,75 @@
     if (nameParam) return decodeURIComponent(nameParam);
     return 'Me';
   })();
-  const myUid = (meInfo.user_id ? String(meInfo.user_id) : '') || uidParam || '';
-  const myAvatar = meInfo.avatar_url || '';
+  const myUid = (meInfo.user_id ? String(meInfo.user_id) : '') || uidParam || initUid || '';
+  let myAvatar = (meInfo.avatar_url || '') || (avatarParam ? decodeURIComponent(avatarParam) : '') || initPhoto || '';
+  const isOwnerByLink = ownerParam === '1';
+
+  // Track owner uid to recompute badges as info arrives
+  let ownerUid = '';
+
+  // Helpers: initials and color
+  function getInitials(name) {
+    const s = (name || '').trim();
+    if (!s) return 'NA';
+    const parts = s.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) {
+      const p = parts[0].replace(/^@/, '');
+      return p.slice(0, 2).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  function colorFromString(str) {
+    // Simple stable HSL based on string hash
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    const hue = h % 360;
+    return `hsl(${hue}, 65%, 65%)`;
+  }
+
+  function setAvatarElements(name, avatarUrl, uid, imgEl, initialsEl) {
+    const initials = getInitials(name || 'User');
+    const colorSeed = uid || name || 'seed';
+    const bg = colorFromString(String(colorSeed));
+
+    if (avatarUrl) {
+      // Show image, hide initials (explicitly override CSS)
+      if (imgEl) {
+        imgEl.src = avatarUrl;
+        imgEl.style.display = 'block';
+      }
+      if (initialsEl) {
+        initialsEl.style.display = 'none';
+      }
+    } else {
+      // Show initials circle, hide image
+      if (imgEl) {
+        imgEl.removeAttribute('src');
+        imgEl.style.display = 'none';
+      }
+      if (initialsEl) {
+        initialsEl.textContent = initials;
+        initialsEl.style.background = bg;
+        initialsEl.style.display = 'flex';
+      }
+    }
+  }
+
+  function setLocalAvatar(name, avatarUrl, uid) {
+    setAvatarElements(name, avatarUrl, uid, localAvatarImg, localAvatarInitials);
+  }
+
+  function setTileAvatar(entry, name, avatarUrl, uid) {
+    if (!entry) return;
+    setAvatarElements(name, avatarUrl, uid, entry.avatarImg, entry.avatarInitials);
+  }
 
   console.debug('[APP] USER_INFO:', meInfo);
-  console.debug('[APP] meName:', meName, 'myUid:', myUid, 'myAvatar:', myAvatar);
+  console.debug('[APP] meName:', meName, 'myUid:', myUid, 'myAvatar:', myAvatar, 'isOwnerByLink:', isOwnerByLink);
 
   localNameLabel.textContent = meName;
-  if (myAvatar) {
-    localAvatar.src = myAvatar;
-    localAvatar.style.display = '';
-  } else {
-    localAvatar.style.display = 'none';
-  }
+  setLocalAvatar(meName, myAvatar, myUid);
 
   roomInput.value = roomId;
   roomLabel.textContent = roomId || '(none)';
@@ -66,20 +131,18 @@
     return `${base}?room=${encodeURIComponent(id)}`;
   }
 
-  function createRemoteTile(id, name, avatar, isOwner) {
-    if (peers.has(id) && peers.get(id).card) {
-      // Update labels if needed
-      const entry = peers.get(id);
+  function createRemoteTile(id, name, avatar, isOwner, uid) {
+    let entry = peers.get(id);
+    if (entry && entry.card) {
       if (name && entry.nameLabel) entry.nameLabel.textContent = name;
-      if (avatar && entry.avatarImg) {
-        entry.avatarImg.src = avatar;
-        entry.avatarImg.style.display = '';
-      }
-      if (entry.ownerBadge) {
+      if (typeof isOwner === 'boolean' && entry.ownerBadge) {
         entry.ownerBadge.style.display = isOwner ? '' : 'none';
+        entry.isOwner = isOwner;
       }
       entry.name = name || entry.name || 'Remote';
       entry.avatar = avatar || entry.avatar || '';
+      entry.uid = uid || entry.uid || '';
+      setTileAvatar(entry, entry.name, entry.avatar, entry.uid);
       return entry.card;
     }
 
@@ -90,14 +153,14 @@
     const titleBox = document.createElement('div');
     titleBox.className = 'title';
 
+    const avatarWrap = document.createElement('div');
+    avatarWrap.className = 'avatar-wrap';
+
     const avatarImg = document.createElement('img');
-    avatarImg.className = 'avatar';
-    if (avatar) {
-      avatarImg.src = avatar;
-      avatarImg.style.display = '';
-    } else {
-      avatarImg.style.display = 'none';
-    }
+    avatarImg.className = 'avatar-img';
+
+    const avatarInitials = document.createElement('div');
+    avatarInitials.className = 'avatar-initials';
 
     const title = document.createElement('h4');
     title.style.margin = '0';
@@ -114,7 +177,9 @@
     title.appendChild(document.createTextNode(' '));
     title.appendChild(ownerBadge);
 
-    titleBox.appendChild(avatarImg);
+    avatarWrap.appendChild(avatarImg);
+    avatarWrap.appendChild(avatarInitials);
+    titleBox.appendChild(avatarWrap);
     titleBox.appendChild(title);
 
     const video = document.createElement('video');
@@ -125,16 +190,20 @@
     card.appendChild(video);
     remoteGrid.appendChild(card);
 
-    if (!peers.has(id)) peers.set(id, {});
-    const entry = peers.get(id);
+    if (!entry) entry = {};
     entry.card = card;
     entry.video = video;
     entry.nameLabel = nameLabel;
-    entry.avatarImg = avatarImg;
     entry.ownerBadge = ownerBadge;
+    entry.avatarImg = avatarImg;
+    entry.avatarInitials = avatarInitials;
     entry.name = name || 'Remote';
     entry.avatar = avatar || '';
+    entry.uid = uid || '';
+    entry.isOwner = !!isOwner;
     peers.set(id, entry);
+
+    setTileAvatar(entry, entry.name, entry.avatar, entry.uid);
 
     console.debug('[APP] Tile created for', id, 'name=', name, 'owner=', isOwner);
     return card;
@@ -191,7 +260,8 @@
     };
 
     pc.ontrack = (e) => {
-      createRemoteTile(targetId, entry.name || 'Remote', entry.avatar || '', !!entry.isOwner);
+      const ownerFlag = !!(ownerUid && entry.uid && ownerUid === entry.uid);
+      createRemoteTile(targetId, entry.name || 'Remote', entry.avatar || '', ownerFlag, entry.uid);
       const videoEl = peers.get(targetId).video;
       videoEl.srcObject = e.streams[0];
       console.debug('[APP] Remote track for', targetId);
@@ -242,9 +312,36 @@
     }
   }
 
+  async function cacheLocalAvatarIfNeeded() {
+    try {
+      // Only cache HTTP(S) avatar URLs; otherwise fallback initials will be used
+      if (!myUid) return;
+      if (!myAvatar) return;
+      if (!/^https?:\/\//i.test(myAvatar)) return;
+      console.debug('[APP] caching avatar for uid=', myUid, 'url=', myAvatar);
+      const resp = await fetch('/avatar/cache', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: myUid, url: myAvatar })
+      });
+      if (!resp.ok) {
+        console.warn('[APP] avatar cache failed', resp.status);
+        return;
+      }
+      const data = await resp.json();
+      if (data && data.avatar) {
+        myAvatar = data.avatar;
+        setLocalAvatar(meName, myAvatar, myUid);
+        console.debug('[APP] avatar cached to', myAvatar);
+      }
+    } catch (e) {
+      console.warn('[APP] avatar cache error', e);
+    }
+  }
+
   joinBtn.onclick = async () => {
     if (joined || connecting) return;
-    connecting = TrueSafe();
+    connecting = true;
     joinBtn.disabled = true;
 
     roomId = roomInput.value.trim();
@@ -260,14 +357,24 @@
       await initMedia();
       applyTrackStates();
 
+      // Try caching HTTP avatar (from Telegram WebApp) before WS hello
+      await cacheLocalAvatarIfNeeded();
+
       ws = new WebSocket(wsUrl(`/ws/${encodeURIComponent(roomId)}`));
 
       ws.onopen = () => {
         joined = true;
         connecting = false;
         joinBtn.disabled = true;
-        console.debug('[APP] WebSocket open, sending hello with name/uid:', meName, myUid);
-        ws.send(JSON.stringify({ type: 'hello', name: meName, uid: myUid, avatar: myAvatar, info: (window.USER_INFO || {}) }));
+        console.debug('[APP] WebSocket open, sending hello', { name: meName, uid: myUid, avatar: myAvatar, is_owner: (ownerParam === '1') });
+        ws.send(JSON.stringify({
+          type: 'hello',
+          name: meName,
+          uid: myUid,
+          avatar: myAvatar,
+          is_owner: (ownerParam === '1'),
+          info: (window.USER_INFO || {})
+        }));
       };
 
       ws.onmessage = async (ev) => {
@@ -277,11 +384,23 @@
           alert(msg.message || 'Server error');
           return;
         }
-        if (msg.type === 'peers') {
+        if (msg.type === 'owner-set') {
+          ownerUid = msg.owner_uid || '';
+          if (ownerUid && myUid === ownerUid) {
+            localOwnerBadge.style.display = '';
+          } else {
+            localOwnerBadge.style.display = 'none';
+          }
+          // Recompute owner badges for all tiles
+          for (const [pid, entry] of peers.entries()) {
+            const isOwner = !!(ownerUid && entry.uid && ownerUid === entry.uid);
+            createRemoteTile(pid, entry.name || 'Remote', entry.avatar || '', isOwner, entry.uid);
+          }
+          console.debug('[APP] owner-set:', ownerUid);
+        } else if (msg.type === 'peers') {
           const list = Array.isArray(msg.peers) ? msg.peers : [];
-          const ownerUid = msg.owner_uid || '';
-          // Mark local owner if matches
-          if (myUid && ownerUid && myUid === ownerUid) {
+          ownerUid = msg.owner_uid || ownerUid || '';
+          if (ownerUid && myUid === ownerUid) {
             localOwnerBadge.style.display = '';
           } else {
             localOwnerBadge.style.display = 'none';
@@ -289,7 +408,7 @@
           for (const p of list) {
             if (p && p.id) {
               const isOwner = !!(ownerUid && p.uid && ownerUid === p.uid);
-              createRemoteTile(p.id, p.name || 'Remote', p.avatar || '', isOwner);
+              createRemoteTile(p.id, p.name || 'Remote', p.avatar || '', isOwner, p.uid || '');
               const entry = peers.get(p.id) || {};
               entry.isOwner = isOwner;
               entry.uid = p.uid || '';
@@ -306,16 +425,17 @@
           const pname = msg.name || 'Remote';
           const pavatar = msg.avatar || '';
           const puid = msg.uid || '';
-          const isOwner = false; // owner-ness will be received via peer-info if needed
+          const isOwner = !!(ownerUid && puid && ownerUid === puid);
           if (pid) {
-            createRemoteTile(pid, pname, pavatar, isOwner);
+            createRemoteTile(pid, pname, pavatar, isOwner, puid);
             const entry = peers.get(pid) || {};
             entry.uid = puid;
             entry.name = pname;
             entry.avatar = pavatar;
+            entry.isOwner = isOwner;
             peers.set(pid, entry);
             ensurePeerConnection(pid);
-            console.debug('[APP] peer-joined:', pid, pname);
+            console.debug('[APP] peer-joined:', pid, pname, 'isOwner=', isOwner);
           }
         } else if (msg.type === 'peer-info') {
           const pid = msg.id;
@@ -327,9 +447,10 @@
             entry.name = pname;
             entry.avatar = pavatar || entry.avatar;
             entry.uid = puid || entry.uid;
+            const isOwner = !!(ownerUid && entry.uid && ownerUid === entry.uid);
             peers.set(pid, entry);
-            createRemoteTile(pid, pname, entry.avatar || '', entry.isOwner || false);
-            console.debug('[APP] peer-info:', pid, pname);
+            createRemoteTile(pid, pname, entry.avatar || '', isOwner, entry.uid);
+            console.debug('[APP] peer-info:', pid, pname, 'isOwner=', isOwner);
           }
         } else if (msg.type === 'offer') {
           await handleOffer(msg.from, msg.data);
@@ -376,8 +497,6 @@
       connecting = false;
     }
   };
-
-  function TrueSafe() { return true; }
 
   function hangup() {
     if (ws && ws.readyState === WebSocket.OPEN) {
