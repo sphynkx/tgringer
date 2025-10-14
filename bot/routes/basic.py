@@ -37,12 +37,12 @@ def _humanize_status(last_seen: datetime | None, lang: str) -> str:
         return tr("status.online", lang=lang)
     if sec < 3600:
         m = sec // 60
-        return tr("status.last_seen.min", lang=lang, m=m)
+        return tr("status.last_seen_min", lang=lang, m=m)
     if sec < 86400:
         h = sec // 3600
-        return tr("status.last_seen.hour", lang=lang, h=h)
+        return tr("status.last_seen_hour", lang=lang, h=h)
     d = sec // 86400
-    return tr("status.last_seen.day", lang=lang, d=d)
+    return tr("status.last_seen_day", lang=lang, d=d)
 
 
 async def _send_creator_links_kb(message: types.Message, lang: str, room_id: str) -> InlineKeyboardBuilder:

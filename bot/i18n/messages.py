@@ -48,9 +48,9 @@ MESSAGES = {
         },
         "status": {
             "online": "online",
-            "last_seen.min": "last seen {m} min ago",
-            "last_seen.hour": "last seen {h} h ago",
-            "last_seen.day": "last seen {d} d ago",
+            "last_seen_min": "last seen {m} min ago",
+            "last_seen_hour": "last seen {h} h ago",
+            "last_seen_day": "last seen {d} d ago",
         },
         "invite": {
             "no_room": "You haven't active room. Enter /newcall.",
