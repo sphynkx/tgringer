@@ -11,3 +11,5 @@ runbot.sh
 run.sh
 server/static/avatars/*
 !server/static/avatars/.gitkeep
+server/static/records/*
+!server/static/records/.gitkeep

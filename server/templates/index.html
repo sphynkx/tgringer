@@ -5,194 +5,45 @@
   <title>TG Ringer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-      --bg: #0f1220;
-      --panel: #1a1f36;
-      --border: #2a2f45;
-      --accent: #5b8cfe;
-      --text: #e8e8ea;
-      --muted: #b0b6c4;
-      --warn: #ffd166;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, sans-serif;
-      margin: 0;
-      padding: 16px;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-    header {
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      flex-wrap:wrap;
-      gap:8px;
-    }
+    body { font-family: system-ui,sans-serif; margin:0; padding:16px; background:#0f1220; color:#e8e8ea; min-height:100vh; display:flex; flex-direction:column; gap:16px; }
+    header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
     h2 { margin:0 0 4px 0; font-size:20px; }
-    small { color: var(--muted); }
-    input, button, select {
-      padding: 8px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: #0f1220;
-      color: var(--text);
-    }
+    small { color:#b0b6c4; }
+    input, button { padding:8px 12px; border-radius:6px; border:1px solid #2a2f45; background:#0f1220; color:#e8e8ea; }
     button { cursor:pointer; }
-    button.primary { background: var(--accent); border:none; font-weight:600; }
-    button:disabled { opacity:0.5; cursor:default; }
+    button.primary { background:#5b8cfe; border:none; font-weight:600; }
+    button:disabled { opacity:.5; cursor:default; }
+    .card { background:#1a1f36; padding:12px; border-radius:10px; display:flex; flex-direction:column; gap:8px; }
     .controls { display:flex; gap:8px; flex-wrap:wrap; }
+    #recordIndicator { color:#ff4d4f; font-weight:600; display:none; }
 
-    .card {
-      background: var(--panel);
-      border-radius: 10px;
-      padding: 12px;
-      display:flex;
-      flex-direction:column;
-      gap:8px;
-      position:relative;
-    }
+    /* ## Stage */
+    #stageContainer { background:#1a1f36; border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; min-height:300px; }
+    #stageHeader { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    #stageName { font-size:18px; font-weight:600; }
+    #stageOwnerBadge { font-size:12px; font-weight:600; color:#ffd166; display:none; }
+    #stageVideoArea { position:relative; background:#000; border-radius:12px; flex:1; min-height:240px; display:flex; align-items:center; justify-content:center; overflow:hidden; max-height:80vh; }
+    #stageVideoArea video { width:100%; height:100%; object-fit:contain; background:#000; }
 
-    /* Stage */
-    #stageContainer {
-      background: var(--panel);
-      border-radius: 12px;
-      padding: 12px;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      min-height: 300px;
-    }
-    #stageHeader {
-      display:flex;
-      align-items:center;
-      gap:12px;
-      flex-wrap:wrap;
-    }
-    #stageName {
-      font-size: 18px;
-      font-weight:600;
-    }
-    #stageOwnerBadge {
-      color: var(--warn);
-      font-weight:600;
-      display:none;
-    }
-    #stageVideoArea {
-      position:relative;
-      background:#000;
-      border-radius:12px;
-      flex:1;
-      min-height:240px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      overflow:hidden;
-      max-height:80vh;
-    }
-    #stageVideoArea video {
-      width:100%;
-      height:100%;
-      object-fit:contain;
-      background:#000;
-      display:block;
-    }
-    .stage-controls {
-      margin-left:auto;
-      display:flex;
-      gap:8px;
-    }
-
-    /* Thumbnails strip */
-    #thumbsStripContainer {
-      background: var(--panel);
-      border-radius: 10px;
-      padding: 10px;
-      display:flex;
-      flex-direction:column;
-      gap:8px;
-    }
-    #thumbsStrip {
-      display:flex;
-      gap:12px;
-      overflow-x:auto;
-      padding-bottom:4px;
-      scrollbar-width:thin;
-    }
+    /* ## Thumbs */
+    #thumbsStripContainer { background:#1a1f36; border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; }
+    #thumbsStrip { display:flex; gap:12px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
     #thumbsStrip::-webkit-scrollbar { height:8px; }
-    #thumbsStrip::-webkit-scrollbar-track { background: var(--panel); }
+    #thumbsStrip::-webkit-scrollbar-track { background:#1a1f36; }
     #thumbsStrip::-webkit-scrollbar-thumb { background:#2f3750; border-radius:4px; }
 
-    .thumb {
-      background: #141a2b;
-      border:1px solid transparent;
-      border-radius:10px;
-      padding:6px;
-      width:180px;
-      flex:0 0 auto;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      cursor:pointer;
-      transition:border .15s;
-      position:relative;
-    }
-    .thumb.active-stage {
-      border-color: var(--accent);
-    }
-    .thumb h4 {
-      margin:0;
-      font-size:13px;
-      font-weight:600;
-      display:flex;
-      align-items:center;
-      gap:4px;
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-    }
-    .owner-badge {
-      color: var(--warn);
-      font-weight:600;
-      font-size:11px;
-    }
-    .thumb video {
-      width:100%;
-      height:110px;
-      object-fit:cover;
-      background:#000;
-      border-radius:8px;
-      display:block;
-    }
-    .avatar-wrap {
-      width:26px; height:26px;
-      display:flex; align-items:center; justify-content:center;
-      position:relative;
-    }
-    .avatar-img {
-      width:26px; height:26px;
-      object-fit:cover;
-      border-radius:50%;
-      display:none;
-    }
-    .avatar-initials {
-      width:26px; height:26px;
-      border-radius:50%;
-      font-size:11px;
-      font-weight:600;
-      display:none;
-      align-items:center;
-      justify-content:center;
-      color:#0f1220;
-      background: var(--accent);
-      letter-spacing:0.5px;
-    }
+    .thumb { background:#141a2b; border:1px solid transparent; border-radius:10px; padding:6px; width:180px; flex:0 0 auto; display:flex; flex-direction:column; gap:6px; cursor:pointer; transition:border .15s; }
+    .thumb.active-stage { border-color:#5b8cfe; }
+    .thumb h4 { margin:0; font-size:13px; font-weight:600; display:flex; align-items:center; gap:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .owner-badge { color:#ffd166; font-weight:600; font-size:11px; }
+    .thumb video { width:100%; height:110px; object-fit:cover; background:#000; border-radius:8px; }
 
-    @media (max-width: 640px) {
+    /* ## Avatars */
+    .avatar-wrap { width:26px; height:26px; display:flex; align-items:center; justify-content:center; }
+    .avatar-img { width:26px; height:26px; object-fit:cover; border-radius:50%; display:none; }
+    .avatar-initials { width:26px; height:26px; border-radius:50%; font-size:11px; font-weight:600; display:none; align-items:center; justify-content:center; color:#0f1220; background:#5b8cfe; letter-spacing:.5px; }
+
+    @media (max-width:640px){
       .thumb { width:140px; }
       .thumb video { height:90px; }
     }
@@ -208,20 +59,33 @@
       <button id="testBtn">Test media</button>
       <button id="toggleAudioBtn">Mute mic</button>
       <button id="toggleVideoBtn">Stop video</button>
+      <span id="recordIndicator">REC</span>
     </div>
   </header>
 
   <div class="card">
-    <div style="display:flex; flex-wrap:wrap; gap:12px;">
+    <div style="display:flex;flex-wrap:wrap;gap:12px;">
       <input id="roomInput" placeholder="room id" />
       <button id="joinBtn" class="primary">Join</button>
       <button id="hangupBtn">Hang up</button>
       <button id="copyLinkBtn">Copy link</button>
+
+      <!-- ## Owner-only recording controls -->
+      <div id="ownerRecordControls" style="display:none; gap:8px; flex-wrap:wrap;">
+        <button id="recordBtn">Record</button>
+        <button id="pauseRecordBtn">Pause</button>
+        <button id="stopRecordBtn">Stop</button>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" id="sendToBotChk" checked />
+          Send to bot
+        </label>
+        <span id="recordStatus" style="font-size:12px;color:#b0b6c4;"></span>
+      </div>
     </div>
     <small>Grant camera/mic permissions when prompted</small>
   </div>
 
-  <!-- Stage -->
+  <!-- ## Stage -->
   <div id="stageContainer">
     <div id="stageHeader">
       <div class="avatar-wrap">
@@ -238,7 +102,7 @@
     <div id="stageVideoArea"></div>
   </div>
 
-  <!-- Thumbnails -->
+  <!-- ## Thumbnails -->
   <div id="thumbsStripContainer">
     <div id="thumbsStrip"></div>
   </div>
@@ -250,6 +114,21 @@
     ];
     window.USER_INFO = {{ user_info_json|safe if user_info_json is defined else "{}" }};
   </script>
-  <script src="/static/js/main.js?v=20251014-2"></script>
+
+  <!-- Order is important!! -->
+  <script src="/static/js/app_bootstrap.js?v=20251014-split1"></script>
+  <script src="/static/js/ui_stage.js?v=20251014-split1"></script>
+  <script src="/static/js/webrtc_signaling.js?v=20251014-split1"></script>
+  <script>
+    (function(){
+      if (window.App.state.isOwnerByLink) {
+        const ownerControls = document.getElementById('ownerRecordControls');
+        if (ownerControls) ownerControls.style.display = 'flex';
+        const scr = document.createElement('script');
+        scr.src = '/static/js/recording.js?v=20251014-split1';
+        document.body.appendChild(scr);
+      }
+    })();
+  </script>
 </body>
 </html>

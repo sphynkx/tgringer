@@ -1,3 +1,4 @@
+## WebSocket signaling route with recording broadcast support
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.utils.rooms import RoomManager
 
@@ -17,7 +18,14 @@ async def ws_room(websocket: WebSocket, room_id: str):
             await websocket.send_json({
                 "type": "peers",
                 "owner_uid": room.owner_uid or "",
-                "peers": [{"id": p.id, "name": p.name or "", "avatar": p.avatar or "", "uid": p.uid or ""} for p in existing]
+                "peers": [
+                    {
+                        "id": p.id,
+                        "name": p.name or "",
+                        "avatar": p.avatar or "",
+                        "uid": p.uid or ""
+                    } for p in existing
+                ]
             })
             for p in existing:
                 try:
@@ -46,11 +54,10 @@ async def ws_room(websocket: WebSocket, room_id: str):
                 peer.avatar = msg.get("avatar") or None
                 is_owner = bool(msg.get("is_owner"))
 
-                ## Assign owner only if explicitly claimed by creator link and not yet set
+                ## Owner assignment (only first claim)
                 if is_owner and peer.uid and not room.owner_uid:
                     room.owner_uid = peer.uid
                     print(f"[WS] owner set room={room_id} owner_uid={room.owner_uid}")
-                    ## Notify all peers about owner selection
                     for p in room.peers.values():
                         try:
                             await p.ws.send_json({"type": "owner-set", "owner_uid": room.owner_uid})
@@ -58,7 +65,6 @@ async def ws_room(websocket: WebSocket, room_id: str):
                             print(f"[WS] failed to send owner-set to={p.id}: {e}")
 
                 print(f"[WS] hello room={room_id} peer={peer.id} name={peer.name} uid={peer.uid} is_owner={is_owner}")
-                ## Inform others about this peer info
                 for p in room.list_peers_except(peer.id):
                     try:
                         await p.ws.send_json({
@@ -84,7 +90,7 @@ async def ws_room(websocket: WebSocket, room_id: str):
                         except Exception as e:
                             print(f"[WS] relay error {msg_type} room={room_id} from={peer.id} to={target}: {e}")
                     else:
-                        print(f"[WS] relay skip, unknown target room={room_id} from={peer.id} to={target}")
+                        print(f"[WS] relay skip unknown target room={room_id} from={peer.id} to={target}")
                 else:
                     other = room.other_peer(peer.id)
                     if other:
@@ -102,6 +108,23 @@ async def ws_room(websocket: WebSocket, room_id: str):
                         print(f"[WS] bye room={room_id} from={peer.id} to={p.id}")
                     except Exception as e:
                         print(f"[WS] failed to send bye to={p.id}: {e}")
+                continue
+
+            ## Recording broadcast (owner only)
+            if msg_type in ("record-start", "record-pause", "record-resume", "record-stop"):
+                if peer.uid and room.owner_uid and peer.uid == room.owner_uid:
+                    payload = {
+                        "type": msg_type,
+                        "owner_uid": room.owner_uid,
+                        "timestamp": msg.get("timestamp") or ""
+                    }
+                    for p in room.list_peers_except(peer.id):
+                        try:
+                            await p.ws.send_json(payload)
+                        except Exception as e:
+                            print(f"[WS] failed record broadcast type={msg_type} to={p.id}: {e}")
+                else:
+                    print(f"[WS] record attempt denied (not owner) room={room_id} peer={peer.id}")
                 continue
 
             print(f"[WS] ignore msg type={msg_type} room={room_id} peer={peer.id}")
