@@ -52,7 +52,7 @@ git clone https://github.com/sphynkx/tgringer
 cd tgringer
 cp intall/.env.example .env
 ```
-Go to BotFather, run `/newbot` set bot name and bot username. receive token. Then modify `.env` - set this token to `BOT_TOKEN` variable. Also set previously configured hostname to `APP_BASE_URL`.
+Go to [@BotFather](https://t.me/BotFather), run `/newbot` set bot name and bot username. receive token. Then modify `.env` - set this token to `BOT_TOKEN` variable. Also set previously configured hostname to `APP_BASE_URL`.
 
 Install venv and all necessary modules:
 ```bash
