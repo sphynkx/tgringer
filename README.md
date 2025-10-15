@@ -1,7 +1,7 @@
 # Telegram WebApp for video calls
-This is a lightweight app for video calls between Telegram users, powered by WebRTC. It works as a Telegram Web App and is integrated with a Telegram bot that helps invite users into the service's private network.
+This is a Telegram WebApp for video calls and conferences between Telegram users, powered by WebRTC. It works as a Telegram Web App and is integrated with a Telegram bot that helps invite users into the service's private network.
 
-Currently at the MVP stage, but functional.
+App allow multiuser communication, store session to mediafile and send it to session owner via Telegram.
 
 
 
@@ -30,6 +30,19 @@ For web app part you need configure some domain. Example of nginx config with pr
 	}
 ```
 Also configure HTTPS. For example via letsencrypt (choose option `2`).
+
+
+### FFmpeg
+```
+dnf install -y https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+sudo dnf install -y https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+dnf install -y ffmpeg ffmpeg-libs
+```
+
+Then check necessary codecs:
+```
+ffmpeg -codecs | grep -E "libx264|aac"
+```
 
 
 ### Backend

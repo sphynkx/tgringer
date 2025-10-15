@@ -3,7 +3,66 @@
   const App = window.App;
   const { refs, state, utils, local, applyStage } = App;
 
+  /* Call timer */
+
+  let callTimerId = null;
+  let callStartMs = 0;
+
+  function pad2(n) {
+    return String(n).padStart(2, '0');
+  }
+
+
+  function formatTime(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const hh = Math.floor(total / 3600);
+    const mm = Math.floor((total % 3600) / 60);
+    const ss = total % 60;
+    return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
+  }
+
+
+  function startCallTimer() {
+    stopCallTimer(false);
+    callStartMs = Date.now();
+    callTimerId = setInterval(() => {
+      const diff = Date.now() - callStartMs;
+      if (refs.callTimer) refs.callTimer.textContent = formatTime(diff);
+    }, 1000);
+    if (refs.callTimer) refs.callTimer.textContent = "00:00:00";
+  }
+
+
+  function stopCallTimer(resetDisplay) {
+    if (callTimerId) {
+      clearInterval(callTimerId);
+      callTimerId = null;
+    }
+    if (resetDisplay && refs.callTimer) {
+      refs.callTimer.textContent = "00:00:00";
+    }
+  }
+
+
+  function remotePeersCount() {
+    let count = 0;
+    for (const [pid] of state.peers.entries()) {
+      if (pid !== 'local') count++;
+    }
+    return count;
+  }
+
+
+  function maybeStopTimerIfAlone() {
+    if (!state.joined) return;
+    if (remotePeersCount() === 0) {
+      stopCallTimer(false);
+    }
+  }
+
+
   /* Create local tile */
+
   function createLocalTile() {
     if (state.peers.has('local')) return;
     const card = document.createElement('div');
@@ -56,6 +115,7 @@
     ensureThumbClick(card, 'local');
   }
 
+
   function ensureThumbClick(card, peerId) {
     if (!card) return;
     card.onclick = () => {
@@ -68,7 +128,9 @@
     };
   }
 
+
   /* Remote tile creation */
+
   function createRemoteTile(peerId, name, avatar, isOwner, uid) {
     let entry = state.peers.get(peerId);
     if (entry && entry.card) {
@@ -133,6 +195,7 @@
     return card;
   }
 
+
   function removeRemoteTile(peerId) {
     const entry = state.peers.get(peerId);
     if (!entry) return;
@@ -145,19 +208,23 @@
     state.peers.delete(peerId);
   }
 
+
   /* Media init */
+
   async function initMedia() {
     if (state.localStream) return;
     state.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     refs.localVideo.srcObject = state.localStream;
     refs.stageVideo.srcObject = state.localStream;
-    window.LOCAL_STREAM = state.localStream; /* for recording.js compatibility */
+    window.LOCAL_STREAM = state.localStream;
   }
+
 
   function updateToggleButtons() {
     refs.toggleAudioBtn.textContent = state.audioEnabled ? 'Mute mic' : 'Unmute mic';
     refs.toggleVideoBtn.textContent = state.videoEnabled ? 'Stop video' : 'Start video';
   }
+
 
   function applyTrackStates() {
     if (!state.localStream) return;
@@ -165,7 +232,9 @@
     state.localStream.getVideoTracks().forEach(t => (t.enabled = state.videoEnabled));
   }
 
+
   /* PeerConnection ensure */
+
   function ensurePeerConnection(peerId) {
     let entry = state.peers.get(peerId);
     if (!entry) { entry = {}; state.peers.set(peerId, entry); }
@@ -196,12 +265,15 @@
     return pc;
   }
 
+
   async function makeOfferTo(peerId) {
     const pc = ensurePeerConnection(peerId);
     const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     await pc.setLocalDescription(offer);
     state.ws.send(JSON.stringify({ type: 'offer', to: peerId, data: offer }));
   }
+
+
   async function handleOffer(from, offer) {
     const pc = ensurePeerConnection(from);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -209,11 +281,15 @@
     await pc.setLocalDescription(answer);
     state.ws.send(JSON.stringify({ type: 'answer', to: from, data: answer }));
   }
+
+
   async function handleAnswer(from, answer) {
     const entry = state.peers.get(from);
     if (!entry || !entry.pc) return;
     await entry.pc.setRemoteDescription(new RTCSessionDescription(answer));
   }
+
+
   async function handleIce(from, cand) {
     const entry = state.peers.get(from);
     if (!entry || !entry.pc) return;
@@ -221,7 +297,9 @@
     catch(e){ console.warn('ICE add failed', e); }
   }
 
+
   /* Avatar cache for local (optional) */
+
   async function cacheLocalAvatarIfNeeded() {
     try {
       if (!state.myUid || !state.myAvatar || !/^https?:\/\//i.test(state.myAvatar)) return;
@@ -246,6 +324,7 @@
     }
   }
 
+
   function showRecordIndicator(active, mode) {
     if (!refs.recordIndicator) return;
     if (!active) {
@@ -256,7 +335,9 @@
     refs.recordIndicator.textContent = (mode === 'pause') ? 'REC (paused)' : 'REC';
   }
 
+
   /* Join flow */
+
   refs.joinBtn.onclick = async () => {
     if (state.joined || state.connecting) return;
     state.connecting = true;
@@ -283,6 +364,7 @@
         state.joined = true;
         state.connecting = false;
         refs.joinBtn.disabled = true;
+        startCallTimer();
         state.ws.send(JSON.stringify({
           type: 'hello',
           name: state.meName,
@@ -371,6 +453,7 @@
                 const entry = state.peers.get(pid);
                 if (entry && entry.pc) { try { entry.pc.close(); } catch(_){ } }
                 removeRemoteTile(pid);
+                maybeStopTimerIfAlone();
               }
             }
             break;
@@ -396,6 +479,7 @@
         window.WS_INSTANCE = null;
         refs.joinBtn.disabled = false;
         state.connecting = false;
+        stopCallTimer(false);
       };
 
     } catch (e) {
@@ -406,7 +490,9 @@
     }
   };
 
+
   /* Hangup with recording auto-stop hook */
+
   function hangup() {
     if (state.isOwnerByLink && window.STOP_ACTIVE_RECORDING) {
       try { window.STOP_ACTIVE_RECORDING(); } catch(e){ console.warn('Stop recording on hangup failed', e); }
@@ -440,9 +526,11 @@
     updateToggleButtons();
     refs.joinBtn.disabled = false;
     showRecordIndicator(false);
+    stopCallTimer(false);
   }
 
   refs.hangupBtn.onclick = hangup;
+
 
   refs.copyLinkBtn.onclick = async () => {
     const id = refs.roomInput.value.trim() || state.roomId || '';
@@ -456,6 +544,7 @@
     }
   };
 
+
   refs.testBtn.onclick = async () => {
     try {
       await initMedia();
@@ -466,25 +555,28 @@
     }
   };
 
+
   refs.toggleAudioBtn.onclick = () => {
     state.audioEnabled = !state.audioEnabled;
     applyTrackStates();
     updateToggleButtons();
   };
+
   refs.toggleVideoBtn.onclick = () => {
     state.videoEnabled = !state.videoEnabled;
     applyTrackStates();
     updateToggleButtons();
   };
 
+
   if (state.roomId && refs.roomInput) refs.roomInput.value = state.roomId;
   if (refs.roomLabel) refs.roomLabel.textContent = state.roomId || '(none)';
+  refs.callTimer = document.getElementById('callTimer');
 
   updateToggleButtons();
   createLocalTile();
   applyStage('local');
 
-  /* Export functions if needed elsewhere */
   App.media = { initMedia, applyTrackStates, updateToggleButtons };
   App.peersApi = { createRemoteTile, ensurePeerConnection, makeOfferTo };
 })();

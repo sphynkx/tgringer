@@ -17,7 +17,6 @@
     .controls { display:flex; gap:8px; flex-wrap:wrap; }
     #recordIndicator { color:#ff4d4f; font-weight:600; display:none; }
 
-    /* ## Stage */
     #stageContainer { background:#1a1f36; border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; min-height:300px; }
     #stageHeader { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
     #stageName { font-size:18px; font-weight:600; }
@@ -25,7 +24,6 @@
     #stageVideoArea { position:relative; background:#000; border-radius:12px; flex:1; min-height:240px; display:flex; align-items:center; justify-content:center; overflow:hidden; max-height:80vh; }
     #stageVideoArea video { width:100%; height:100%; object-fit:contain; background:#000; }
 
-    /* ## Thumbs */
     #thumbsStripContainer { background:#1a1f36; border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; }
     #thumbsStrip { display:flex; gap:12px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
     #thumbsStrip::-webkit-scrollbar { height:8px; }
@@ -38,7 +36,6 @@
     .owner-badge { color:#ffd166; font-weight:600; font-size:11px; }
     .thumb video { width:100%; height:110px; object-fit:cover; background:#000; border-radius:8px; }
 
-    /* ## Avatars */
     .avatar-wrap { width:26px; height:26px; display:flex; align-items:center; justify-content:center; }
     .avatar-img { width:26px; height:26px; object-fit:cover; border-radius:50%; display:none; }
     .avatar-initials { width:26px; height:26px; border-radius:50%; font-size:11px; font-weight:600; display:none; align-items:center; justify-content:center; color:#0f1220; background:#5b8cfe; letter-spacing:.5px; }
@@ -54,6 +51,7 @@
     <div>
       <h2>TG Ringer</h2>
       <small>Room: <span id="roomLabel"></span></small>
+      <small style="margin-left:12px;">Call: <span id="callTimer">00:00</span></small>
     </div>
     <div class="controls">
       <button id="testBtn">Test media</button>
@@ -70,7 +68,6 @@
       <button id="hangupBtn">Hang up</button>
       <button id="copyLinkBtn">Copy link</button>
 
-      <!-- ## Owner-only recording controls -->
       <div id="ownerRecordControls" style="display:none; gap:8px; flex-wrap:wrap;">
         <button id="recordBtn">Record</button>
         <button id="pauseRecordBtn">Pause</button>
@@ -85,7 +82,6 @@
     <small>Grant camera/mic permissions when prompted</small>
   </div>
 
-  <!-- ## Stage -->
   <div id="stageContainer">
     <div id="stageHeader">
       <div class="avatar-wrap">
@@ -102,7 +98,6 @@
     <div id="stageVideoArea"></div>
   </div>
 
-  <!-- ## Thumbnails -->
   <div id="thumbsStripContainer">
     <div id="thumbsStrip"></div>
   </div>
@@ -115,17 +110,16 @@
     window.USER_INFO = {{ user_info_json|safe if user_info_json is defined else "{}" }};
   </script>
 
-  <!-- Order is important!! -->
-  <script src="/static/js/app_bootstrap.js?v=20251014-split1"></script>
-  <script src="/static/js/ui_stage.js?v=20251014-split1"></script>
-  <script src="/static/js/webrtc_signaling.js?v=20251014-split1"></script>
+  <script src="/static/js/app_bootstrap.js?v=20251015-b1"></script>
+  <script src="/static/js/ui_stage.js?v=20251015-b1"></script>
+  <script src="/static/js/webrtc_signaling.js?v=20251015-b1"></script>
   <script>
     (function(){
       if (window.App.state.isOwnerByLink) {
         const ownerControls = document.getElementById('ownerRecordControls');
         if (ownerControls) ownerControls.style.display = 'flex';
         const scr = document.createElement('script');
-        scr.src = '/static/js/recording.js?v=20251014-split1';
+        scr.src = '/static/js/recording.js?v=20251015-b1';
         document.body.appendChild(scr);
       }
     })();
