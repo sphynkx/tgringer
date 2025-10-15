@@ -1,0 +1,206 @@
+## Call session DB helpers
+## Operations against call_logs, call_participants, call_recordings, call_events
+
+import json
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+
+from server.db import get_pool
+
+
+## Resolve users.id by tg_user_id
+
+
+async def get_user_id_by_tg(tg_user_id: str) -> Optional[int]:
+    if not tg_user_id:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id FROM users WHERE tg_user_id=%s", (tg_user_id,))
+            row = await cur.fetchone()
+            return int(row[0]) if row else None
+
+
+## Call lifecycle
+
+
+async def create_call_if_absent(room_uid: str, owner_tg_uid: str) -> Optional[int]:
+    """
+    Create call_logs row with status 'created' if not already present active.
+    Returns call_id.
+    """
+    owner_id = await get_user_id_by_tg(owner_tg_uid)
+    if not owner_id:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id FROM call_logs WHERE room_uid=%s AND owner_id=%s AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+                (room_uid, owner_id)
+            )
+            row = await cur.fetchone()
+            if row:
+                return int(row[0])
+            await cur.execute(
+                "INSERT INTO call_logs (room_uid, owner_id, status, started_at) VALUES (%s, %s, 'created', NOW())",
+                (room_uid, owner_id)
+            )
+            call_id = cur.lastrowid
+            await add_event(call_id, None, "owner_join", {"room_uid": room_uid})
+            return int(call_id)
+
+
+async def mark_call_active(call_id: int) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE call_logs SET status='active' WHERE id=%s AND status='created'", (call_id,))
+            if cur.rowcount:
+                await add_event(call_id, None, "call_status_change", {"to": "active"})
+
+
+async def finalize_call(call_id: int, ended_reason: str = "owner_leave") -> None:
+    """
+    Finalize call: set ended_at, duration, status 'completed' or 'solo' based on participants presence.
+    Update participant_count, participants_json.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT COUNT(DISTINCT user_id) FROM call_participants WHERE call_id=%s",
+                (call_id,)
+            )
+            row = await cur.fetchone()
+            part_count = int(row[0]) if row else 0
+
+            await cur.execute("SELECT started_at FROM call_logs WHERE id=%s", (call_id,))
+            row = await cur.fetchone()
+            if not row:
+                return
+            started_at: datetime = row[0]  # type: ignore
+
+            await cur.execute("SELECT user_id FROM call_participants WHERE call_id=%s", (call_id,))
+            uids = [int(r[0]) for r in await cur.fetchall()]
+
+            status = "completed" if part_count > 0 else "solo"
+
+            await cur.execute(
+                "UPDATE call_logs SET ended_at=NOW(), duration_sec=TIMESTAMPDIFF(SECOND, %s, NOW()), status=%s, participant_count=%s, participants_json=%s, metadata=JSON_SET(COALESCE(metadata,'{}'), '$.ended_reason', %s) WHERE id=%s",
+                (started_at, status, part_count, json.dumps(uids), ended_reason, call_id)
+            )
+            await add_event(call_id, None, "call_status_change", {"to": status})
+
+
+## Participants
+
+
+async def participant_join(call_id: int, user_tg_uid: str, display_name: Optional[str], avatar_url: Optional[str]) -> None:
+    user_id = await get_user_id_by_tg(user_tg_uid)
+    if not user_id:
+        return
+    now = datetime.utcnow()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, joins_count FROM call_participants WHERE call_id=%s AND user_id=%s",
+                (call_id, user_id)
+            )
+            row = await cur.fetchone()
+            if row:
+                pid = int(row[0])
+                joins = int(row[1]) + 1
+                await cur.execute(
+                    "UPDATE call_participants SET joins_count=%s, last_left_at=NULL WHERE id=%s",
+                    (joins, pid)
+                )
+            else:
+                await cur.execute(
+                    "INSERT INTO call_participants (call_id, user_id, first_joined_at, joins_count, display_name, avatar_url) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (call_id, user_id, now, 1, display_name or None, avatar_url or None)
+                )
+            await add_event(call_id, user_id, "peer_join", {"name": display_name or "", "avatar": avatar_url or ""})
+
+
+async def participant_leave(call_id: int, user_tg_uid: str, joined_at_hint: Optional[datetime] = None) -> None:
+    """
+    On leave, update last_left_at and add duration to total_duration_sec.
+    """
+    user_id = await get_user_id_by_tg(user_tg_uid)
+    if not user_id:
+        return
+    now = datetime.utcnow()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, first_joined_at, last_left_at, total_duration_sec FROM call_participants WHERE call_id=%s AND user_id=%s",
+                (call_id, user_id)
+            )
+            row = await cur.fetchone()
+            if not row:
+                await cur.execute(
+                    "INSERT INTO call_participants (call_id, user_id, first_joined_at, last_left_at, total_duration_sec, joins_count) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (call_id, user_id, now, now, 0, 1)
+                )
+            else:
+                pid = int(row[0])
+                first_joined_at: datetime = row[1]  # type: ignore
+                last_left_at = row[2]
+                total_dur = int(row[3]) if row[3] is not None else 0
+
+                start_ref = joined_at_hint or first_joined_at
+                if last_left_at:
+                    await cur.execute("UPDATE call_participants SET last_left_at=%s WHERE id=%s", (now, pid))
+                else:
+                    delta = int((now - start_ref).total_seconds())
+                    new_total = max(0, total_dur + max(0, delta))
+                    await cur.execute(
+                        "UPDATE call_participants SET last_left_at=%s, total_duration_sec=%s WHERE id=%s",
+                        (now, new_total, pid)
+                    )
+            await add_event(call_id, user_id, "peer_leave", {})
+
+
+## Events
+
+
+async def add_event(call_id: int, user_id: Optional[int], event_type: str, payload: Dict[str, Any]) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO call_events (call_id, user_id, event_type, payload, created_at) VALUES (%s, %s, %s, %s, NOW())",
+                (call_id, user_id, event_type, json.dumps(payload) if payload else None)
+            )
+
+
+## Recordings
+
+
+async def add_recording(call_id: int, file_name: str, started_ts: int, ended_ts: int, duration_sec: Optional[int], fmt: str, size_bytes: Optional[int], sent_to_bot: bool, base_name: Optional[str]) -> None:
+    pool = await get_pool()
+    started_dt = datetime.utcfromtimestamp(started_ts)
+    ended_dt = datetime.utcfromtimestamp(ended_ts)
+    fmt_clean = "mp4" if fmt.lower() == "mp4" else "webm"
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO call_recordings (call_id, file_name, started_at, ended_at, duration_sec, format, size_bytes, sent_to_bot, base_name) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (call_id, file_name, started_dt, ended_dt, duration_sec, fmt_clean, size_bytes, 1 if sent_to_bot else 0, base_name)
+            )
+            await cur.execute("SELECT recordings_json FROM call_logs WHERE id=%s", (call_id,))
+            row = await cur.fetchone()
+            cur_list: List[str] = []
+            if row and row[0]:
+                try:
+                    cur_list = json.loads(row[0])
+                except Exception:
+                    cur_list = []
+            if file_name not in cur_list:
+                cur_list.append(file_name)
+            await cur.execute("UPDATE call_logs SET recordings_json=%s WHERE id=%s", (json.dumps(cur_list), call_id))
+            await add_event(call_id, None, "record_stop", {"file": file_name})
