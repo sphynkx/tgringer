@@ -29,6 +29,9 @@
     testBtn: document.getElementById('testBtn'),
     toggleAudioBtn: document.getElementById('toggleAudioBtn'),
     toggleVideoBtn: document.getElementById('toggleVideoBtn'),
+    shareScreenBtn: document.getElementById('shareScreenBtn'),
+    shareSysAudioToOthersChk: document.getElementById('shareSysAudioToOthersChk'),
+    recordSysAudioChk: document.getElementById('recordSysAudioChk'),
 
     stageVideoArea: document.getElementById('stageVideoArea'),
     stageNameEl: document.getElementById('stageName'),
@@ -40,6 +43,7 @@
 
     thumbsStrip: document.getElementById('thumbsStrip'),
     recordIndicator: document.getElementById('recordIndicator'),
+    screenIndicator: document.getElementById('screenIndicator'),
   };
 
   /* Telegram user info */
@@ -76,6 +80,12 @@
     videoEnabled: true,
     stagePeerId: 'local',
     userManuallyChoseStage: false,
+
+    /* Screen share state */
+    isScreenSharing: false,
+    screenStream: null,
+    prevVideoTrack: null,
+    screenAudioSenders: new Map(), /* peerId -> RTCRtpSender */
   };
 
   if (state.roomId && refs.roomInput) refs.roomInput.value = state.roomId;
@@ -86,10 +96,12 @@
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${location.host}${path}`;
   }
+
   function getLinkForRoom(id) {
     const base = `${location.origin}${location.pathname}`;
     return `${base}?room=${encodeURIComponent(id)}`;
   }
+
   function getInitials(name) {
     const s = (name || '').trim();
     if (!s) return 'NA';
@@ -100,12 +112,14 @@
     }
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
+
   function colorFromString(str) {
     let h = 0;
     for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
     const hue = h % 360;
     return `hsl(${hue}, 65%, 65%)`;
   }
+
   function setAvatarElements(name, avatarUrl, uid, imgEl, initialsEl) {
     const initials = getInitials(name || 'NA');
     const colorSeed = uid || name || 'seed';

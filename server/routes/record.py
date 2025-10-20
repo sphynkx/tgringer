@@ -1,5 +1,5 @@
 ## Chunked recording upload & finalization with selectable pipeline (A or B)
-## Adds call recording logging and events
+## Adds call recording logging and events (best-effort, DB errors do not fail requests)
 
 import os
 import time
@@ -286,7 +286,10 @@ async def record_finish(
         if send_to_bot:
             await _notify_bot(room_id, owner_uid, final_url)
 
-        await _log_recording(room_id, owner_uid, file_name_logged, started_ts, ended_ts, fmt_logged, size_bytes_logged, bool(send_to_bot), base)
+        try:
+            await _log_recording(room_id, owner_uid, file_name_logged, started_ts, ended_ts, fmt_logged, size_bytes_logged, bool(send_to_bot), base)
+        except Exception as e:
+            print(f"[RECORD] _log_recording failed (ignored): {e}")
 
         return {"ok": True, "url": final_url, "file": os.path.basename(final_url)}
 
@@ -363,7 +366,10 @@ async def record_finish(
     if send_to_bot:
         await _notify_bot(room_id, owner_uid, final_url)
 
-    await _log_recording(room_id, owner_uid, file_name_logged, started_ts, ended_ts, fmt_logged, size_bytes_logged, bool(send_to_bot), base)
+    try:
+        await _log_recording(room_id, owner_uid, file_name_logged, started_ts, ended_ts, fmt_logged, size_bytes_logged, bool(send_to_bot), base)
+    except Exception as e:
+        print(f"[RECORD] _log_recording failed (ignored): {e}")
 
     return {"ok": True, "url": final_url, "file": os.path.basename(final_mp4)}
 
@@ -373,7 +379,12 @@ async def _notify_bot(room_id: str, owner_uid: str, url: str):
     if not bot_endpoint:
         print("[RECORD] BOT_RECORD_NOTIFY_URL not set, skip notify")
         return
-    payload = {"room_id": room_id, "owner_uid": owner_uid, "file_url": url}
+    payload = {
+        "room_id": room_id,
+        "owner_uid": owner_uid,
+        "chat_id": owner_uid,           # add explicit chat_id fallback
+        "file_url": url
+    }
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(bot_endpoint, json=payload)
@@ -413,15 +424,19 @@ async def _resolve_call_id(room_uid: str, owner_tg_uid: str, rec_started_ts: int
 async def _log_recording(room_uid: str, owner_tg_uid: str, file_name: Optional[str], started_ts: int, ended_ts: int, fmt: str, size_bytes: Optional[int], sent_to_bot: bool, base_name: Optional[str]) -> None:
     """
     Append call_recordings row and update call_logs.recordings_json for the matching call.
+    Best-effort: any DB errors are logged and ignored.
     """
     if not file_name:
         return
-    call_id = await _resolve_call_id(room_uid, owner_tg_uid, started_ts)
+    try:
+        call_id = await _resolve_call_id(room_uid, owner_tg_uid, started_ts)
+    except Exception as e:
+        print(f"[RECORD] resolve call id failed (ignored): {e}")
+        return
     if not call_id:
         return
     dur = max(0, int(ended_ts - started_ts))
     try:
         await callsdb.add_recording(call_id, file_name, started_ts, ended_ts, dur, fmt, size_bytes, sent_to_bot, base_name)
     except Exception as e:
-        print(f"[RECORD] add_recording failed: {e}")
-
+        print(f"[RECORD] add_recording failed (ignored): {e}")

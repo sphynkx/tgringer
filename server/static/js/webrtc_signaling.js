@@ -1,4 +1,4 @@
-/* ## WebRTC signaling, peers, tiles, WebSocket, indicators */
+/* ## WebRTC signaling, peers, tiles, WebSocket, indicators, screen share */
 (function(){
   const App = window.App;
   const { refs, state, utils, local, applyStage } = App;
@@ -7,6 +7,7 @@
 
   let callTimerId = null;
   let callStartMs = 0;
+
 
   function pad2(n) {
     return String(n).padStart(2, '0');
@@ -58,6 +59,13 @@
     if (remotePeersCount() === 0) {
       stopCallTimer(false);
     }
+  }
+
+
+  /* Debounce mark for stage switch */
+
+  function markStageSwitch() {
+    try { window.__STAGE_SWITCH_TS = Date.now(); } catch(_){}
   }
 
 
@@ -121,8 +129,12 @@
     card.onclick = () => {
       state.userManuallyChoseStage = true;
       if (state.stagePeerId === peerId) {
-        if (peerId !== 'local') applyStage('local');
+        if (peerId !== 'local') {
+          markStageSwitch();
+          applyStage('local');
+        }
       } else {
+        markStageSwitch();
         applyStage(peerId);
       }
     };
@@ -223,6 +235,10 @@
   function updateToggleButtons() {
     refs.toggleAudioBtn.textContent = state.audioEnabled ? 'Mute mic' : 'Unmute mic';
     refs.toggleVideoBtn.textContent = state.videoEnabled ? 'Stop video' : 'Start video';
+    refs.shareScreenBtn.textContent = state.isScreenSharing ? 'Stop sharing' : 'Share screen';
+    if (refs.screenIndicator) {
+      refs.screenIndicator.style.display = state.isScreenSharing ? 'inline-block' : 'none';
+    }
   }
 
 
@@ -253,7 +269,10 @@
       const v = state.peers.get(peerId)?.video;
       if (v) {
         v.srcObject = e.streams[0];
-        if (state.stagePeerId === peerId) refs.stageVideo.srcObject = v.srcObject;
+        if (state.stagePeerId === peerId) {
+          markStageSwitch();
+          refs.stageVideo.srcObject = v.srcObject;
+        }
       }
     };
 
@@ -333,6 +352,130 @@
     }
     refs.recordIndicator.style.display = 'inline-block';
     refs.recordIndicator.textContent = (mode === 'pause') ? 'REC (paused)' : 'REC';
+  }
+
+
+  /* Screen share */
+
+  function getAllVideoSenders() {
+    const senders = [];
+    for (const [, entry] of state.peers.entries()) {
+      if (!entry.pc) continue;
+      const list = entry.pc.getSenders ? entry.pc.getSenders() : [];
+      for (const s of list) {
+        if (s && s.track && s.track.kind === 'video') senders.push({ peerId: findPeerIdByPC(entry.pc), sender: s });
+      }
+    }
+    return senders;
+  }
+
+
+  function findPeerIdByPC(pc) {
+    for (const [pid, entry] of state.peers.entries()) {
+      if (entry.pc === pc) return pid;
+    }
+    return null;
+  }
+
+
+  async function startScreenShare() {
+    if (!state.localStream) {
+      await initMedia();
+      applyTrackStates();
+    }
+
+    const wantForwardSysAudio = !!(refs.shareSysAudioToOthersChk && refs.shareSysAudioToOthersChk.checked);
+
+    let displayStream = null;
+    try {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 25, cursor: "motion" },
+        audio: wantForwardSysAudio ? true : false
+      });
+    } catch (e) {
+      console.warn('getDisplayMedia denied or failed', e);
+      return;
+    }
+    if (!displayStream) return;
+
+    const vTrack = displayStream.getVideoTracks()[0];
+    if (!vTrack) {
+      try { displayStream.getTracks().forEach(t => t.stop()); } catch(_){}
+      return;
+    }
+
+    vTrack.onended = () => {
+      try { stopScreenShare(); } catch(_){}
+    };
+
+    const prevV = state.localStream.getVideoTracks()[0] || null;
+    state.prevVideoTrack = prevV;
+
+    const senders = getAllVideoSenders();
+    await Promise.all(senders.map(async ({ sender }) => {
+      try { await sender.replaceTrack(vTrack); } catch(e){ console.warn('replaceTrack failed', e); }
+    }));
+
+    markStageSwitch();
+    refs.stageVideo.srcObject = displayStream;
+
+    state.isScreenSharing = true;
+    state.screenStream = displayStream;
+
+    if (wantForwardSysAudio) {
+      const aTrack = displayStream.getAudioTracks()[0] || null;
+      if (aTrack) {
+        for (const [pid, entry] of state.peers.entries()) {
+          if (!entry.pc) continue;
+          try {
+            const sender = entry.pc.addTrack(aTrack, displayStream);
+            state.screenAudioSenders.set(pid, sender);
+          } catch(e) {
+            console.warn('addTrack audio failed', e);
+          }
+        }
+      }
+    }
+
+    updateToggleButtons();
+  }
+
+
+  async function stopScreenShare() {
+    const restoreV = state.prevVideoTrack;
+    const senders = getAllVideoSenders();
+    if (restoreV) {
+      await Promise.all(senders.map(async ({ sender }) => {
+        try { await sender.replaceTrack(restoreV); } catch(e){ console.warn('restore replaceTrack failed', e); }
+      }));
+    }
+
+    for (const [pid, sender] of state.screenAudioSenders.entries()) {
+      try {
+        const entry = state.peers.get(pid);
+        if (entry && entry.pc && sender) {
+          entry.pc.removeTrack(sender);
+        }
+      } catch(_){}
+    }
+    state.screenAudioSenders.clear();
+
+    if (state.screenStream) {
+      try { state.screenStream.getTracks().forEach(t => t.stop()); } catch(_){}
+    }
+    state.screenStream = null;
+    state.isScreenSharing = false;
+
+    if (state.stagePeerId === 'local') {
+      markStageSwitch();
+      refs.stageVideo.srcObject = refs.localVideo.srcObject || null;
+    } else {
+      const entry = state.peers.get(state.stagePeerId);
+      markStageSwitch();
+      refs.stageVideo.srcObject = (entry && entry.video && entry.video.srcObject) ? entry.video.srcObject : null;
+    }
+
+    updateToggleButtons();
   }
 
 
@@ -438,7 +581,10 @@
                 entry.isOwner = !!(state.ownerUid && entry.uid && state.ownerUid === entry.uid);
                 state.peers.set(pid, entry);
                 createRemoteTile(pid, entry.name, entry.avatar, entry.isOwner, entry.uid);
-                if (state.stagePeerId === pid) applyStage(pid);
+                if (state.stagePeerId === pid) {
+                  markStageSwitch();
+                  applyStage(pid);
+                }
               }
             }
             break;
@@ -480,6 +626,9 @@
         refs.joinBtn.disabled = false;
         state.connecting = false;
         stopCallTimer(false);
+        if (state.isScreenSharing) {
+          try { stopScreenShare(); } catch(_){}
+        }
       };
 
     } catch (e) {
@@ -491,11 +640,14 @@
   };
 
 
-  /* Hangup with recording auto-stop hook */
+  /* Hangup with recording auto-stop and screen-share auto-stop */
 
   function hangup() {
     if (state.isOwnerByLink && window.STOP_ACTIVE_RECORDING) {
       try { window.STOP_ACTIVE_RECORDING(); } catch(e){ console.warn('Stop recording on hangup failed', e); }
+    }
+    if (state.isScreenSharing) {
+      try { stopScreenShare(); } catch(_){}
     }
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       try { state.ws.send(JSON.stringify({ type: 'bye' })); } catch(_){}
@@ -562,10 +714,20 @@
     updateToggleButtons();
   };
 
+
   refs.toggleVideoBtn.onclick = () => {
     state.videoEnabled = !state.videoEnabled;
     applyTrackStates();
     updateToggleButtons();
+  };
+
+
+  refs.shareScreenBtn.onclick = async () => {
+    if (!state.isScreenSharing) {
+      await startScreenShare();
+    } else {
+      await stopScreenShare();
+    }
   };
 
 

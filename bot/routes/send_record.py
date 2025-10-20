@@ -1,6 +1,7 @@
-## Bot notify endpoint: choose send mode 'link' or 'video' for Telegram
-## Reads BOT_TOKEN and BOT_SEND_MODE from environment
-## Payload is expected to include at least chat_id or other resolvable target
+## Back-compat endpoint /bot/send_record with send mode switch 'link' or 'video'
+## Env:
+##   BOT_TOKEN
+##   BOT_SEND_MODE = link | video
 
 import os
 from typing import Optional
@@ -10,11 +11,8 @@ from fastapi import APIRouter, Body
 
 router = APIRouter()
 
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 BOT_SEND_MODE = (os.environ.get("BOT_SEND_MODE", "link") or "link").lower().strip()
-## 'link' -> sendMessage with URL
-## 'video' -> sendVideo with URL for preview
 
 
 async def _send_message(chat_id: str, text: str) -> Optional[dict]:
@@ -45,34 +43,36 @@ async def _send_video(chat_id: str, video_url: str, caption: str = "") -> Option
         return r.json()
 
 
-@router.post("/bot/record_notify")
-async def record_notify(
-    payload: dict = Body(...),
-):
+@router.post("/bot/send_record")
+async def send_record(payload: dict = Body(...)):
     """
-    Expected payload fields:
-      - chat_id (string or int) : target chat to send recording to
-      - file_url (string)       : absolute https URL to the mp4/webm
-      - room_id, owner_uid      : optional, for captions or routing
+    Expected payload:
+      - chat_id: optional if your bot resolves it by room_id/owner_uid internally
+      - file_url: required (absolute https URL to mp4/webm)
+      - room_id, owner_uid: optional, used for caption or routing
     """
     chat_id = str(payload.get("chat_id") or "").strip()
     file_url = (payload.get("file_url") or "").strip()
     room_id = (payload.get("room_id") or "").strip()
     owner_uid = (payload.get("owner_uid") or "").strip()
 
-    if not chat_id or not file_url:
-        print(f"[BOT] missing chat_id or file_url in payload: {payload}")
-        return {"ok": False, "error": "missing chat_id or file_url"}
+    if not file_url:
+        return {"ok": False, "error": "missing file_url"}
+
+    if not chat_id:
+        print("[BOT] chat_id is empty; ensure your resolver is implemented or pass chat_id in payload")
 
     caption = f"Room: {room_id}" if room_id else ""
     if owner_uid:
         caption = (caption + f" | Owner: {owner_uid}").strip(" |")
 
-    mode = BOT_SEND_MODE
-    if mode == "video":
+    if os.environ.get("BOT_SEND_MODE", "link").lower().strip() == "video" and chat_id:
         res = await _send_video(chat_id, file_url, caption)
         return {"ok": bool(res), "mode": "video"}
     else:
         text = (caption + "\n" if caption else "") + file_url
-        res = await _send_message(chat_id, text)
-        return {"ok": bool(res), "mode": "link"}
+        if chat_id:
+            res = await _send_message(chat_id, text)
+            return {"ok": bool(res), "mode": "link"}
+        print("[BOT] No chat_id, cannot send to Telegram; returning link-only result")
+        return {"ok": True, "mode": "link"}

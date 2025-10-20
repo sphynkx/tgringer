@@ -1,400 +1,43 @@
-## Chunked recording upload & finalization with selectable pipeline (A or B)
-## Adds call recording logging and events
+## Call session DB helpers
+## Operations against call_logs, call_participants, call_recordings, call_events
 
-import os
-import time
-import shutil
-import subprocess
-from typing import Dict, Optional, Any, List
+import json
+from datetime import datetime
+from typing import Optional, List, Dict, Any
 
-import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
-
-from server.config import (
-    RECORD_PIPELINE_MODE,
-    RECORD_MP4_PRESET,
-    RECORD_MP4_CRF,
-    RECORD_MP4_A_BPS,
-    RECORD_MP4_AR,
-    RECORD_TARGET_WIDTH,
-    RECORD_TARGET_HEIGHT,
-    RECORD_TARGET_FPS,
-    RECORD_TARGET_GOP,
-    RECORD_SEGMENT_TIME,
-)
-from server.db import calls as callsdb
 from server.db import get_pool
 
-RECORD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static", "records"))
-os.makedirs(RECORD_DIR, exist_ok=True)
 
-router = APIRouter()
-
-ACTIVE: Dict[str, Dict[str, Any]] = {}
+## Resolve users.id by tg_user_id
 
 
-def _safe_component(s: str) -> str:
-    return "".join(c for c in s if c.isalnum() or c in ("-", "_"))
-
-
-def _build_base(room_id: str, owner_uid: str, started_ts: str) -> str:
-    return f"{_safe_component(room_id)}_{_safe_component(owner_uid)}_{_safe_component(started_ts)}"
-
-
-def _ffmpeg_transcode_cmd_for_file(input_path: str, output_path: str) -> List[str]:
-    return [
-        "ffmpeg", "-y",
-        "-fflags", "+genpts",
-        "-i", input_path,
-        "-c:v", "libx264",
-        "-preset", RECORD_MP4_PRESET,
-        "-crf", str(RECORD_MP4_CRF),
-        "-pix_fmt", "yuv420p",
-        "-r", str(RECORD_TARGET_FPS),
-        "-s", f"{RECORD_TARGET_WIDTH}x{RECORD_TARGET_HEIGHT}",
-        "-g", str(RECORD_TARGET_GOP),
-        "-keyint_min", str(RECORD_TARGET_GOP),
-        "-c:a", "aac",
-        "-b:a", RECORD_MP4_A_BPS,
-        "-ar", str(RECORD_MP4_AR),
-        "-ac", "2",
-        "-movflags", "+faststart",
-        output_path,
-    ]
-
-
-def _ffmpeg_segment_cmd_for_fifo(fifo_path: str, out_pattern: str, segment_time: int) -> List[str]:
-    return [
-        "ffmpeg", "-y",
-        "-fflags", "+genpts",
-        "-i", fifo_path,
-        "-c:v", "libx264",
-        "-preset", RECORD_MP4_PRESET,
-        "-crf", str(RECORD_MP4_CRF),
-        "-pix_fmt", "yuv420p",
-        "-r", str(RECORD_TARGET_FPS),
-        "-s", f"{RECORD_TARGET_WIDTH}x{RECORD_TARGET_HEIGHT}",
-        "-g", str(RECORD_TARGET_GOP),
-        "-keyint_min", str(RECORD_TARGET_GOP),
-        "-force_key_frames", f"expr:gte(t,n_forced*{segment_time})",
-        "-c:a", "aac",
-        "-b:a", RECORD_MP4_A_BPS,
-        "-ar", str(RECORD_MP4_AR),
-        "-ac", "2",
-        "-movflags", "+faststart",
-        "-f", "segment",
-        "-segment_time", str(segment_time),
-        "-reset_timestamps", "1",
-        out_pattern,
-    ]
-
-
-@router.post("/record/start")
-async def record_start(
-    room_id: str = Form(...),
-    owner_uid: str = Form(...),
-):
-    started_ts = str(int(time.time()))
-    recording_id = f"{room_id}-{owner_uid}-{started_ts}"
-    base = _build_base(room_id, owner_uid, started_ts)
-
-    mode = (RECORD_PIPELINE_MODE or "A").upper()
-    if mode not in ("A", "B"):
-        mode = "A"
-
-    session: Dict[str, Any] = {
-        "mode": mode,
-        "room_id": room_id,
-        "owner_uid": owner_uid,
-        "started_ts": started_ts,
-        "base": base,
-        "last_seq": 0,
-    }
-
-    try:
-        call_id = await _resolve_call_id(room_id, owner_uid, int(started_ts))
-        if call_id:
-            await callsdb.add_event(call_id, None, "record_start", {"ts": started_ts})
-        session["call_id"] = call_id
-    except Exception as e:
-        print(f"[RECORD] log record_start failed: {e}")
-
-    if mode == "A":
-        part_path = os.path.join(RECORD_DIR, base + ".webm.part")
-        if os.path.exists(part_path):
-            raise HTTPException(status_code=409, detail="Recording file already exists")
-        try:
-            fh = open(part_path, "ab")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Cannot open file: {e}")
-        session["part_path"] = part_path
-        session["file_handle"] = fh
-        ACTIVE[recording_id] = session
-        return {"ok": True, "recording_id": recording_id, "started_ts": started_ts}
-
-    session_dir = os.path.join(RECORD_DIR, base)
-    try:
-        os.makedirs(session_dir, exist_ok=True)
-        fifo_path = os.path.join(session_dir, f"{base}.fifo")
-        if os.path.exists(fifo_path):
-            os.remove(fifo_path)
-        os.mkfifo(fifo_path, mode=0o660)
-        os.chmod(fifo_path, 0o660)
-
-        out_pattern = os.path.join(session_dir, f"{base}_%06d.mp4")
-        cmd = _ffmpeg_segment_cmd_for_fifo(fifo_path, out_pattern, max(1, int(RECORD_SEGMENT_TIME)))
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        writer = open(fifo_path, "wb", buffering=0)
-
-        session["session_dir"] = session_dir
-        session["fifo_path"] = fifo_path
-        session["fifo_writer"] = writer
-        session["ffmpeg_proc"] = proc
-
-        ACTIVE[recording_id] = session
-        return {"ok": True, "recording_id": recording_id, "started_ts": started_ts}
-
-    except Exception as e:
-        try:
-            if "ffmpeg_proc" in session and session.get("ffmpeg_proc"):
-                try:
-                    session["ffmpeg_proc"].terminate()
-                except:
-                    pass
-        except:
-            pass
-
-        part_path = os.path.join(RECORD_DIR, base + ".webm.part")
-        try:
-            fh = open(part_path, "ab")
-        except Exception as e2:
-            raise HTTPException(status_code=500, detail=f"Cannot fallback to A: {e2}")
-        session["mode"] = "A"
-        session.pop("session_dir", None)
-        session.pop("fifo_path", None)
-        session.pop("fifo_writer", None)
-        session.pop("ffmpeg_proc", None)
-        session["part_path"] = part_path
-        session["file_handle"] = fh
-        ACTIVE[recording_id] = session
-        return {"ok": True, "recording_id": recording_id, "started_ts": started_ts}
-
-
-@router.post("/record/chunk")
-async def record_chunk(
-    recording_id: str = Form(...),
-    seq: int = Form(...),
-    file: UploadFile = File(...),
-):
-    session = ACTIVE.get(recording_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="No active recording")
-
-    mode = session["mode"]
-
-    if mode == "A":
-        fh = session.get("file_handle")
-        if not fh:
-            raise HTTPException(status_code=500, detail="File handle missing")
-        try:
-            data = await file.read()
-            if not data:
-                raise HTTPException(status_code=400, detail="Empty chunk")
-            fh.write(data)
-            fh.flush()
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Write failed: {e}")
-        session["last_seq"] = max(session.get("last_seq", 0), int(seq))
-        return {"ok": True, "seq": int(seq)}
-
-    writer = session.get("fifo_writer")
-    if not writer:
-        raise HTTPException(status_code=500, detail="FIFO writer missing")
-
-    try:
-        data = await file.read()
-        if not data:
-            raise HTTPException(status_code=400, detail="Empty chunk")
-        writer.write(data)
-        writer.flush()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"FIFO write failed: {e}")
-
-    session["last_seq"] = max(session.get("last_seq", 0), int(seq))
-    return {"ok": True, "seq": int(seq)}
-
-
-@router.post("/record/finish")
-async def record_finish(
-    recording_id: str = Form(...),
-    send_to_bot: int = Form(1),
-):
-    session = ACTIVE.pop(recording_id, None)
-    if not session:
-        raise HTTPException(status_code=404, detail="Recording not found")
-
-    mode = session["mode"]
-    room_id = session["room_id"]
-    owner_uid = session["owner_uid"]
-    base = session["base"]
-    started_ts = int(session["started_ts"])
-
-    file_name_logged = None
-    fmt_logged = "mp4"
-    size_bytes_logged = None
-    ended_ts = int(time.time())
-
-    if mode == "A":
-        fh = session.get("file_handle")
-        if fh:
-            try:
-                fh.close()
-            except:
-                pass
-        part_path = session.get("part_path")
-        if not part_path or not os.path.exists(part_path):
-            raise HTTPException(status_code=500, detail="Partial file missing")
-        webm_path = os.path.join(RECORD_DIR, base + ".webm")
-        try:
-            os.replace(part_path, webm_path)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Finalize failed: {e}")
-
-        final_url = f"/static/records/{os.path.basename(webm_path)}"
-        file_name_logged = os.path.basename(webm_path)
-        fmt_logged = "webm"
-        size_bytes_logged = os.path.getsize(webm_path)
-
-        ffmpeg = shutil.which("ffmpeg")
-        if ffmpeg:
-            mp4_path = os.path.join(RECORD_DIR, base + ".mp4")
-            cmd = _ffmpeg_transcode_cmd_for_file(webm_path, mp4_path)
-            try:
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                final_url = f"/static/records/{os.path.basename(mp4_path)}"
-                file_name_logged = os.path.basename(mp4_path)
-                fmt_logged = "mp4"
-                size_bytes_logged = os.path.getsize(mp4_path)
-            except Exception as e:
-                print(f"[RECORD] ffmpeg convert failed: {e} (keeping webm)")
-
-        if send_to_bot:
-            await _notify_bot(room_id, owner_uid, final_url)
-
-        await _log_recording(room_id, owner_uid, file_name_logged, started_ts, ended_ts, fmt_logged, size_bytes_logged, bool(send_to_bot), base)
-
-        return {"ok": True, "url": final_url, "file": os.path.basename(final_url)}
-
-    writer = session.get("fifo_writer")
-    proc = session.get("ffmpeg_proc")
-    session_dir = os.path.join(RECORD_DIR, base)
-
-    if writer:
-        try:
-            writer.flush()
-            writer.close()
-        except:
-            pass
-
-    if proc:
-        try:
-            proc.wait(timeout=60)
-        except Exception:
-            try:
-                proc.terminate()
-            except:
-                pass
-
-    if not os.path.isdir(session_dir):
-        raise HTTPException(status_code=500, detail="Session dir missing")
-
-    segs = [
-        os.path.join(session_dir, f) for f in sorted(os.listdir(session_dir))
-        if f.endswith(".mp4") and f.startswith(base + "_")
-    ]
-    if not segs:
-        raise HTTPException(status_code=500, detail="No mp4 segments produced")
-
-    list_path = os.path.join(session_dir, f"{base}_list.txt")
-    with open(list_path, "w", encoding="utf-8") as lf:
-        for p in segs:
-            lf.write(f"file '{p}'\n")
-
-    final_mp4_tmp = os.path.join(session_dir, f"{base}.mp4")
-    cmd_concat = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", list_path,
-        "-c", "copy",
-        "-movflags", "+faststart",
-        final_mp4_tmp
-    ]
-    try:
-        subprocess.run(cmd_concat, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Concat failed: {e}")
-
-    final_mp4 = os.path.join(RECORD_DIR, f"{base}.mp4")
-    try:
-        os.replace(final_mp4_tmp, final_mp4)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Move final failed: {e}")
-
-    final_url = f"/static/records/{os.path.basename(final_mp4)}"
-    file_name_logged = os.path.basename(final_mp4)
-    fmt_logged = "mp4"
-    size_bytes_logged = os.path.getsize(final_mp4)
-
-    try:
-        for f in os.listdir(session_dir):
-            try:
-                os.remove(os.path.join(session_dir, f))
-            except:
-                pass
-        os.rmdir(session_dir)
-    except Exception as e:
-        print(f"[RECORD] cleanup warning: {e}")
-
-    if send_to_bot:
-        await _notify_bot(room_id, owner_uid, final_url)
-
-    await _log_recording(room_id, owner_uid, file_name_logged, started_ts, ended_ts, fmt_logged, size_bytes_logged, bool(send_to_bot), base)
-
-    return {"ok": True, "url": final_url, "file": os.path.basename(final_mp4)}
-
-
-async def _notify_bot(room_id: str, owner_uid: str, url: str):
-    bot_endpoint = os.environ.get("BOT_RECORD_NOTIFY_URL", "").strip()
-    if not bot_endpoint:
-        print("[RECORD] BOT_RECORD_NOTIFY_URL not set, skip notify")
-        return
-    payload = {"room_id": room_id, "owner_uid": owner_uid, "file_url": url}
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(bot_endpoint, json=payload)
-            if resp.status_code >= 300:
-                print(f"[RECORD] bot notify failed status={resp.status_code} body={resp.text}")
-            else:
-                print("[RECORD] bot notified")
-    except Exception as e:
-        print(f"[RECORD] bot notify error: {e}")
-
-
-async def _resolve_call_id(room_uid: str, owner_tg_uid: str, rec_started_ts: int) -> Optional[int]:
+async def get_user_id_by_tg(tg_user_id: str) -> Optional[int]:
     """
-    Find active call for (room_uid, owner), prefer not-ended; otherwise nearest started before recording.
+    Return users.id for given Telegram user id string, or None if not found.
     """
+    if not tg_user_id:
+        return None
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            owner_id = await callsdb.get_user_id_by_tg(owner_tg_uid)
-            if not owner_id:
-                return None
+            await cur.execute("SELECT id FROM users WHERE tg_user_id=%s", (tg_user_id,))
+            row = await cur.fetchone()
+            return int(row[0]) if row else None
+
+
+## Call lifecycle
+
+async def create_call_if_absent(room_uid: str, owner_tg_uid: str) -> Optional[int]:
+    """
+    Create call_logs row with status 'created' if no active call exists for (room_uid, owner).
+    Returns call_id or None if owner user not found.
+    """
+    owner_id = await get_user_id_by_tg(owner_tg_uid)
+    if not owner_id:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT id FROM call_logs WHERE room_uid=%s AND owner_id=%s AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
                 (room_uid, owner_id)
@@ -402,26 +45,205 @@ async def _resolve_call_id(room_uid: str, owner_tg_uid: str, rec_started_ts: int
             row = await cur.fetchone()
             if row:
                 return int(row[0])
+
             await cur.execute(
-                "SELECT id FROM call_logs WHERE room_uid=%s AND owner_id=%s AND started_at<=FROM_UNIXTIME(%s) ORDER BY started_at DESC LIMIT 1",
-                (room_uid, owner_id, rec_started_ts)
+                "INSERT INTO call_logs (room_uid, owner_id, status, started_at) VALUES (%s, %s, 'created', NOW())",
+                (room_uid, owner_id)
+            )
+            call_id = int(cur.lastrowid)
+
+            await add_event(call_id, None, "owner_join", {"room_uid": room_uid})
+            return call_id
+
+
+async def mark_call_active(call_id: int) -> None:
+    """
+    Switch call status from 'created' to 'active' once a non-owner joins.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE call_logs SET status='active' WHERE id=%s AND status='created'",
+                (call_id,)
+            )
+            if cur.rowcount:
+                await add_event(call_id, None, "call_status_change", {"to": "active"})
+
+
+async def finalize_call(call_id: int, ended_reason: str = "owner_leave") -> None:
+    """
+    Finalize call: set ended_at, duration, final status ('completed' or 'solo'),
+    update participant_count and participants_json (distinct user ids).
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT COUNT(DISTINCT user_id) FROM call_participants WHERE call_id=%s",
+                (call_id,)
             )
             row = await cur.fetchone()
-            return int(row[0]) if row else None
+            distinct_count = int(row[0]) if row else 0
+
+            await cur.execute("SELECT started_at FROM call_logs WHERE id=%s", (call_id,))
+            row = await cur.fetchone()
+            if not row:
+                return
+            started_at: datetime = row[0]  # type: ignore
+
+            await cur.execute(
+                "SELECT user_id FROM call_participants WHERE call_id=%s",
+                (call_id,)
+            )
+            uids = [int(r[0]) for r in await cur.fetchall()]
+
+            final_status = "completed" if distinct_count > 0 else "solo"
+
+            await cur.execute(
+                "UPDATE call_logs "
+                "SET ended_at=NOW(), "
+                "    duration_sec=TIMESTAMPDIFF(SECOND, %s, NOW()), "
+                "    status=%s, "
+                "    participant_count=%s, "
+                "    participants_json=%s, "
+                "    metadata=JSON_SET(COALESCE(metadata, '{}'), '$.ended_reason', %s) "
+                "WHERE id=%s",
+                (started_at, final_status, distinct_count, json.dumps(uids), ended_reason, call_id)
+            )
+
+            await add_event(call_id, None, "call_status_change", {"to": final_status})
 
 
-async def _log_recording(room_uid: str, owner_tg_uid: str, file_name: Optional[str], started_ts: int, ended_ts: int, fmt: str, size_bytes: Optional[int], sent_to_bot: bool, base_name: Optional[str]) -> None:
+## Participants
+
+async def participant_join(call_id: int, user_tg_uid: str, display_name: Optional[str], avatar_url: Optional[str]) -> None:
     """
-    Append call_recordings row and update call_logs.recordings_json for the matching call.
+    Upsert participant row on join, increment joins_count when repeats.
     """
-    if not file_name:
+    user_id = await get_user_id_by_tg(user_tg_uid)
+    if not user_id:
         return
-    call_id = await _resolve_call_id(room_uid, owner_tg_uid, started_ts)
-    if not call_id:
-        return
-    dur = max(0, int(ended_ts - started_ts))
-    try:
-        await callsdb.add_recording(call_id, file_name, started_ts, ended_ts, dur, fmt, size_bytes, sent_to_bot, base_name)
-    except Exception as e:
-        print(f"[RECORD] add_recording failed: {e}")
+    now = datetime.utcnow()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, joins_count FROM call_participants WHERE call_id=%s AND user_id=%s",
+                (call_id, user_id)
+            )
+            row = await cur.fetchone()
+            if row:
+                pid = int(row[0])
+                joins = int(row[1]) + 1
+                await cur.execute(
+                    "UPDATE call_participants SET joins_count=%s, last_left_at=NULL WHERE id=%s",
+                    (joins, pid)
+                )
+            else:
+                await cur.execute(
+                    "INSERT INTO call_participants "
+                    "(call_id, user_id, first_joined_at, joins_count, display_name, avatar_url) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (call_id, user_id, now, 1, display_name or None, avatar_url or None)
+                )
 
+            await add_event(call_id, user_id, "peer_join", {"name": display_name or "", "avatar": avatar_url or ""})
+
+
+async def participant_leave(call_id: int, user_tg_uid: str, joined_at_hint: Optional[datetime] = None) -> None:
+    """
+    On leave, set last_left_at and add elapsed seconds to total_duration_sec.
+    If row absent, create minimal row and close it.
+    """
+    user_id = await get_user_id_by_tg(user_tg_uid)
+    if not user_id:
+        return
+    now = datetime.utcnow()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, first_joined_at, last_left_at, total_duration_sec "
+                "FROM call_participants WHERE call_id=%s AND user_id=%s",
+                (call_id, user_id)
+            )
+            row = await cur.fetchone()
+            if not row:
+                await cur.execute(
+                    "INSERT INTO call_participants "
+                    "(call_id, user_id, first_joined_at, last_left_at, total_duration_sec, joins_count) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (call_id, user_id, now, now, 0, 1)
+                )
+            else:
+                pid = int(row[0])
+                first_joined_at: datetime = row[1]  # type: ignore
+                last_left_at = row[2]
+                total_dur = int(row[3]) if row[3] is not None else 0
+
+                start_ref = joined_at_hint or first_joined_at
+                if last_left_at:
+                    await cur.execute("UPDATE call_participants SET last_left_at=%s WHERE id=%s", (now, pid))
+                else:
+                    delta = int((now - start_ref).total_seconds())
+                    new_total = max(0, total_dur + max(0, delta))
+                    await cur.execute(
+                        "UPDATE call_participants SET last_left_at=%s, total_duration_sec=%s WHERE id=%s",
+                        (now, new_total, pid)
+                    )
+
+            await add_event(call_id, user_id, "peer_leave", {})
+
+
+## Events
+
+async def add_event(call_id: int, user_id: Optional[int], event_type: str, payload: Dict[str, Any]) -> None:
+    """
+    Append a call_events row with JSON payload and current timestamp.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO call_events (call_id, user_id, event_type, payload, created_at) "
+                "VALUES (%s, %s, %s, %s, NOW())",
+                (call_id, user_id, event_type, json.dumps(payload) if payload else None)
+            )
+
+
+## Recordings
+
+async def add_recording(call_id: int, file_name: str, started_ts: int, ended_ts: int, duration_sec: Optional[int], fmt: str, size_bytes: Optional[int], sent_to_bot: bool, base_name: Optional[str]) -> None:
+    """
+    Insert call_recordings row and update call_logs.recordings_json (distinct list).
+    """
+    pool = await get_pool()
+    started_dt = datetime.utcfromtimestamp(started_ts)
+    ended_dt = datetime.utcfromtimestamp(ended_ts)
+    fmt_clean = "mp4" if (fmt or "").lower() == "mp4" else "webm"
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO call_recordings "
+                "(call_id, file_name, started_at, ended_at, duration_sec, format, size_bytes, sent_to_bot, base_name) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (call_id, file_name, started_dt, ended_dt, duration_sec, fmt_clean, size_bytes, 1 if sent_to_bot else 0, base_name)
+            )
+
+            await cur.execute("SELECT recordings_json FROM call_logs WHERE id=%s", (call_id,))
+            row = await cur.fetchone()
+            current: List[str] = []
+            if row and row[0]:
+                try:
+                    current = json.loads(row[0])
+                except Exception:
+                    current = []
+
+            if file_name and file_name not in current:
+                current.append(file_name)
+
+            await cur.execute("UPDATE call_logs SET recordings_json=%s WHERE id=%s", (json.dumps(current), call_id))
+
+            await add_event(call_id, None, "record_stop", {"file": file_name})

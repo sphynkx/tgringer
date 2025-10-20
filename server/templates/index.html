@@ -14,8 +14,9 @@
     button.primary { background:#5b8cfe; border:none; font-weight:600; }
     button:disabled { opacity:.5; cursor:default; }
     .card { background:#1a1f36; padding:12px; border-radius:10px; display:flex; flex-direction:column; gap:8px; }
-    .controls { display:flex; gap:8px; flex-wrap:wrap; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     #recordIndicator { color:#ff4d4f; font-weight:600; display:none; }
+    #screenIndicator { color:#ffd166; font-weight:600; display:none; }
 
     #stageContainer { background:#1a1f36; border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; min-height:300px; }
     #stageHeader { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -40,6 +41,10 @@
     .avatar-img { width:26px; height:26px; object-fit:cover; border-radius:50%; display:none; }
     .avatar-initials { width:26px; height:26px; border-radius:50%; font-size:11px; font-weight:600; display:none; align-items:center; justify-content:center; color:#0f1220; background:#5b8cfe; letter-spacing:.5px; }
 
+    .opt { font-size:12px; display:flex; align-items:center; gap:6px; }
+
+    #recordStatusRow { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    #recordStatus { font-size:12px; color:#b0b6c4; }
     @media (max-width:640px){
       .thumb { width:140px; }
       .thumb video { height:90px; }
@@ -51,32 +56,50 @@
     <div>
       <h2>TG Ringer</h2>
       <small>Room: <span id="roomLabel"></span></small>
-      <small style="margin-left:12px;">Call: <span id="callTimer">00:00</span></small>
+      <small style="margin-left:12px;">Call: <span id="callTimer">00:00:00</span></small>
     </div>
     <div class="controls">
       <button id="testBtn">Test media</button>
       <button id="toggleAudioBtn">Mute mic</button>
       <button id="toggleVideoBtn">Stop video</button>
+      <button id="shareScreenBtn">Share screen</button>
+      <label class="opt" title="Send system audio from your screen to other participants (may cause echo)">
+        <input type="checkbox" id="shareSysAudioToOthersChk" />
+        Send system audio to others
+      </label>
       <span id="recordIndicator">REC</span>
+      <span id="screenIndicator">SCREEN</span>
     </div>
   </header>
 
   <div class="card">
-    <div style="display:flex;flex-wrap:wrap;gap:12px;">
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
       <input id="roomInput" placeholder="room id" />
       <button id="joinBtn" class="primary">Join</button>
       <button id="hangupBtn">Hang up</button>
       <button id="copyLinkBtn">Copy link</button>
 
-      <div id="ownerRecordControls" style="display:none; gap:8px; flex-wrap:wrap;">
-        <button id="recordBtn">Record</button>
-        <button id="pauseRecordBtn">Pause</button>
-        <button id="stopRecordBtn">Stop</button>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
-          <input type="checkbox" id="sendToBotChk" checked />
-          Send to bot
-        </label>
-        <span id="recordStatus" style="font-size:12px;color:#b0b6c4;"></span>
+      <div id="ownerRecordControls" style="display:none; gap:8px; flex-wrap:wrap; align-items:center; width:100%; margin-top:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button id="recordBtn">Record</button>
+          <button id="pauseRecordBtn">Pause</button>
+          <button id="stopRecordBtn">Stop</button>
+          <label class="opt" title="Send finished recording to bot">
+            <input type="checkbox" id="sendToBotChk" checked />
+            Send to bot
+          </label>
+          <label class="opt" title="Include system audio from your screen into server recording">
+            <input type="checkbox" id="recordSysAudioChk" />
+            Record system audio
+          </label>
+          <label class="opt" title="Enable dynamics compressor for the mixed audio">
+            <input type="checkbox" id="compressAudioChk" />
+            Audio compressor
+          </label>
+        </div>
+        <div id="recordStatusRow">
+          <span id="recordStatus">Idle</span>
+        </div>
       </div>
     </div>
     <small>Grant camera/mic permissions when prompted</small>
@@ -110,16 +133,16 @@
     window.USER_INFO = {{ user_info_json|safe if user_info_json is defined else "{}" }};
   </script>
 
-  <script src="/static/js/app_bootstrap.js?v=20251015-b1"></script>
-  <script src="/static/js/ui_stage.js?v=20251015-b1"></script>
-  <script src="/static/js/webrtc_signaling.js?v=20251015-b1"></script>
+  <script src="/static/js/app_bootstrap.js?v=20251020-b2"></script>
+  <script src="/static/js/ui_stage.js?v=20251020-b2"></script>
+  <script src="/static/js/webrtc_signaling.js?v=20251020-b2"></script>
   <script>
     (function(){
       if (window.App.state.isOwnerByLink) {
         const ownerControls = document.getElementById('ownerRecordControls');
         if (ownerControls) ownerControls.style.display = 'flex';
         const scr = document.createElement('script');
-        scr.src = '/static/js/recording.js?v=20251015-b1';
+        scr.src = '/static/js/recording.js?v=20251020-b2';
         document.body.appendChild(scr);
       }
     })();

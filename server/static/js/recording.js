@@ -5,6 +5,8 @@
    ## - Streams chunks to server (start/chunk/finish)
    ## - Pause: recorder.pause() + gating chunk upload
    ## - Optional master dynamics compressor (WebAudio) with toggle
+   ## - Optional include system audio from screen share into recording
+   ## - Stage-switch debounce: reuse last stable frame for 150 ms to avoid artifacts
    ## Notes:
    ## - ASCII-only comments
 */
@@ -22,29 +24,7 @@
   const stopBtn = document.getElementById('stopRecordBtn');
   const recordStatusEl = document.getElementById('recordStatus');
   const sendToBotChk = document.getElementById('sendToBotChk');
-
-  /* Optional compressor toggle UI (injected if not present) */
-
-  let compressAudioChk = document.getElementById('compressAudioChk');
-
-  if (!compressAudioChk) {
-    const ownerControls = document.getElementById('ownerRecordControls');
-    if (ownerControls) {
-      const wrap = document.createElement('label');
-      wrap.style.cssText = 'font-size:12px;display:flex;align-items:center;gap:4px;';
-      const inp = document.createElement('input');
-      inp.type = 'checkbox';
-      inp.id = 'compressAudioChk';
-      /* Default disabled; can be overridden via global flag */
-      inp.checked = !!window.REC_USE_COMPRESSOR;
-      const txt = document.createTextNode('Audio compressor');
-      wrap.appendChild(inp);
-      wrap.appendChild(txt);
-      ownerControls.insertBefore(wrap, recordStatusEl);
-      compressAudioChk = inp;
-    }
-  }
-
+  const recordSysAudioChk = document.getElementById('recordSysAudioChk');
 
   /* Canvas 1280x720 */
 
@@ -52,6 +32,15 @@
   recCanvas.width = 1280;
   recCanvas.height = 720;
   const ctx = recCanvas.getContext('2d');
+
+  /* Offscreen last frame for debounce */
+
+  const lastFrameCanvas = document.createElement('canvas');
+  lastFrameCanvas.width = recCanvas.width;
+  lastFrameCanvas.height = recCanvas.height;
+  const lastCtx = lastFrameCanvas.getContext('2d');
+
+  const STAGE_DEBOUNCE_MS = 150;
 
 
   /* State */
@@ -63,7 +52,6 @@
   let audioCtx = null;
   let mixDest = null;
 
-  /* optional chain nodes */
   let compNode = null;
   let masterGain = null;
 
@@ -87,14 +75,34 @@
 
 
   function shouldUseCompressor() {
-    if (compressAudioChk) return !!compressAudioChk.checked;
-    return !!window.REC_USE_COMPRESSOR;
+    const chk = document.getElementById('compressAudioChk');
+    return !!(chk && chk.checked);
   }
 
 
-  /* Draw loop from the real stage video and overlay current stage name */
+  function isStageInDebounce() {
+    const ts = (typeof window.__STAGE_SWITCH_TS === 'number') ? window.__STAGE_SWITCH_TS : 0;
+    if (!ts) return false;
+    return (Date.now() - ts) < STAGE_DEBOUNCE_MS;
+  }
+
+
+  /* Draw loop */
 
   function drawLoop() {
+    const hold = isStageInDebounce();
+
+    if (hold) {
+      try {
+        ctx.drawImage(lastFrameCanvas, 0, 0, recCanvas.width, recCanvas.height);
+      } catch(_) {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, recCanvas.width, recCanvas.height);
+      }
+      requestAnimationFrame(drawLoop);
+      return;
+    }
+
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, recCanvas.width, recCanvas.height);
 
@@ -107,7 +115,7 @@
       const dh = Math.floor(vh * ratio);
       const dx = Math.floor((recCanvas.width - dw) / 2);
       const dy = Math.floor((recCanvas.height - dh) / 2);
-      try { ctx.drawImage(stageVideo, dx, dy, dw, dh); } catch {}
+      try { ctx.drawImage(stageVideo, dx, dy, dw, dh); } catch(_){}
     }
 
     const meta = App.getStageMeta ? App.getStageMeta() : { name: 'User' };
@@ -125,48 +133,44 @@
     ctx.fillStyle = '#ffffff';
     ctx.fillText(name, 16 + padX, recCanvas.height - boxH - 16 + padY + 20);
 
+    try {
+      lastCtx.drawImage(recCanvas, 0, 0, lastFrameCanvas.width, lastFrameCanvas.height);
+    } catch(_){}
+
     requestAnimationFrame(drawLoop);
   }
   requestAnimationFrame(drawLoop);
 
 
-  /* WebAudio mix chain:
-     Sources (local + all remote audio tracks) -> [DynamicsCompressor?] -> MasterGain -> MediaStreamDestination
-     Compressor is optional, decided at recording start (not switched live during a recording)
-  */
+  /* WebAudio mix chain */
 
   function buildMixedAudioStream() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     mixDest = audioCtx.createMediaStreamDestination();
 
-    /* Create chain nodes */
     const useComp = shouldUseCompressor();
 
     if (useComp) {
       compNode = audioCtx.createDynamicsCompressor();
-      /* Typical podcast-ish settings; tweak as needed */
       try {
-        compNode.threshold.value = -24;   /* dB */
-        compNode.knee.value = 30;         /* dB */
-        compNode.ratio.value = 12;        /* unitless */
-        compNode.attack.value = 0.003;    /* s */
-        compNode.release.value = 0.25;    /* s */
-      } catch(_) {}
+        compNode.threshold.value = -24;
+        compNode.knee.value = 30;
+        compNode.ratio.value = 12;
+        compNode.attack.value = 0.003;
+        compNode.release.value = 0.25;
+      } catch(_){}
     } else {
       compNode = null;
     }
 
     masterGain = audioCtx.createGain();
-    /* Gentle headroom to avoid clipping after summation */
     masterGain.gain.value = 0.9;
 
-    /* Wire chain end */
     if (useComp && compNode) {
       compNode.connect(masterGain);
     }
     masterGain.connect(mixDest);
 
-    /* Connect each source to chain input */
     const chainInput = (useComp && compNode) ? compNode : masterGain;
 
     const added = new Set();
@@ -188,6 +192,15 @@
     for (const [, e] of state.peers.entries()) {
       if (e && e.video && e.video.srcObject) {
         e.video.srcObject.getAudioTracks().forEach(addTrack);
+      }
+    }
+
+    /* Optional system audio from screen share into recording */
+    if (recordSysAudioChk && recordSysAudioChk.checked) {
+      const ss = state.screenStream;
+      if (ss) {
+        const sa = ss.getAudioTracks();
+        if (sa && sa.length) sa.forEach(addTrack);
       }
     }
 
@@ -217,7 +230,9 @@
     paused = false;
     chunkSeq = 0;
 
-    recorder = new MediaRecorder(combined, { mimeType: 'video/webm;codecs=vp8,opus' });
+    recorder = new MediaRecorder(combined, {
+      mimeType: 'video/webm;codecs=vp8,opus'
+    });
 
     recorder.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
@@ -248,13 +263,13 @@
   function pauseRecording() {
     if (!recorder) return;
     if (paused) {
-      try { recorder.resume(); } catch {}
+      try { recorder.resume(); } catch(_){}
       paused = false;
       setStatus('Recording...');
       pauseBtn.textContent = 'Pause';
       broadcast('record-resume');
     } else {
-      try { recorder.pause(); } catch {}
+      try { recorder.pause(); } catch(_){}
       paused = true;
       setStatus('Paused');
       pauseBtn.textContent = 'Resume';
@@ -277,13 +292,11 @@
       setStatus('Upload failed');
     }
 
-    /* Cleanup local state */
     try {
       if (audioCtx) {
-        /* Closing AudioContext is optional; browsers may block it */
         if (audioCtx.close) { await audioCtx.close(); }
       }
-    } catch(_) {}
+    } catch(_){}
 
     recorder = null;
     recordingId = null;
@@ -300,7 +313,7 @@
     setStatus('Stopping...');
     pauseBtn.disabled = true;
     stopBtn.disabled = true;
-    try { recorder.stop(); } catch {}
+    try { recorder.stop(); } catch(_){}
   }
 
 
