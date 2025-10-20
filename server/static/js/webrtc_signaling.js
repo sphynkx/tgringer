@@ -2,6 +2,7 @@
 (function(){
   const App = window.App;
   const { refs, state, utils } = App;
+  const applyStage = App.applyStage; // defined in ui_stage.js
 
   /* Call timer */
   let callTimerId = null;
@@ -45,7 +46,7 @@
     if (remotePeersCount() === 0) stopCallTimer(false);
   }
 
-  /* Debounce mark for stage switch (used by canvas recorder to avoid tearing) */
+  /* Debounce mark for stage switch (used by recorder to avoid tearing) */
   function markStageSwitch() { try { window.__STAGE_SWITCH_TS = Date.now(); } catch(_){ } }
 
   /* Create local tile */
@@ -72,12 +73,7 @@
     title.appendChild(ownerBadge);
 
     const videoWrap = document.createElement('div');
-    const localVideo = refs.localVideo || (() => {
-      const v = document.createElement('video');
-      v.autoplay = true; v.playsInline = true; v.muted = true;
-      App.refs.localVideo = v;
-      return v;
-    })();
+    const localVideo = refs.localVideo;
     localVideo.style.width = '100%';
     localVideo.style.height = '110px';
     localVideo.style.objectFit = 'cover';
@@ -200,21 +196,9 @@
   async function initMedia() {
     if (state.localStream) return;
     state.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    const localVideo = refs.localVideo || document.createElement('video');
-    if (!refs.localVideo) {
-      localVideo.autoplay = true; localVideo.playsInline = true; localVideo.muted = true;
-      App.refs.localVideo = localVideo;
-    }
-    localVideo.srcObject = state.localStream;
-
-    const stageVideo = refs.stageVideo || document.createElement('video');
-    if (!refs.stageVideo) {
-      stageVideo.autoplay = true; stageVideo.playsInline = true;
-      stageVideo.style.width = '100%'; stageVideo.style.height = '100%'; stageVideo.style.objectFit = 'contain';
-      if (refs.stageVideoArea) refs.stageVideoArea.appendChild(stageVideo);
-      App.refs.stageVideo = stageVideo;
-    }
-    stageVideo.srcObject = state.localStream;
+    refs.localVideo.srcObject = state.localStream;
+    refs.stageVideo.srcObject = state.localStream;
+    window.LOCAL_STREAM = state.localStream;
     console.log('[MEDIA] local stream ready');
   }
 
@@ -351,22 +335,34 @@
         return;
       }
 
-      // on user stop via browser UI
-      vTrack.onended = () => { try { stopScreenShare(); } catch(_){ } };
-
       // remember previous local video track
       const prevV = state.localStream.getVideoTracks()[0] || null;
       state.prevVideoTrack = prevV;
 
-      // replace outgoing video tracks on all peers
+      // 1) replace outgoing video tracks on all peers
       const senders = getAllVideoSenders();
       await Promise.all(senders.map(async ({ sender }) => {
         try { await sender.replaceTrack(vTrack); } catch(e){ console.warn('replaceTrack failed', e); }
       }));
 
-      // show screen on stage
+      // 2) replace track inside localStream (for consistent local preview and future addTrack)
+      try {
+        if (prevV) state.localStream.removeTrack(prevV);
+      } catch(_){}
+      try {
+        state.localStream.addTrack(vTrack);
+      } catch(e) { console.warn('localStream.addTrack failed', e); }
+
+      // 3) update local preview and stage to use updated localStream
+      refs.localVideo.srcObject = state.localStream;
       markStageSwitch();
-      refs.stageVideo.srcObject = displayStream;
+      if (typeof applyStage === 'function') {
+        // keep stage as local, which now shows screen
+        state.stagePeerId = 'local';
+        applyStage('local');
+      } else {
+        refs.stageVideo.srcObject = state.localStream;
+      }
 
       state.isScreenSharing = true;
       state.screenStream = displayStream;
@@ -386,6 +382,8 @@
       }
 
       updateToggleButtons();
+      console.log('[SCREEN] started, replacing video track for all peers and local stream');
+      vTrack.onended = () => { try { stopScreenShare(); } catch(_){ } };
     } catch (e) {
       console.error('startScreenShare error', e);
     }
@@ -393,7 +391,10 @@
 
   async function stopScreenShare() {
     try {
+      const currentScreenV = (state.screenStream && state.screenStream.getVideoTracks()[0]) || null;
       const restoreV = state.prevVideoTrack;
+
+      // 1) replace outgoing video tracks back
       const senders = getAllVideoSenders();
       if (restoreV) {
         await Promise.all(senders.map(async ({ sender }) => {
@@ -401,7 +402,15 @@
         }));
       }
 
-      // remove forwarded system audio
+      // 2) fix localStream back: remove current (screen) video track and add prev camera
+      try {
+        if (currentScreenV) state.localStream.removeTrack(currentScreenV);
+      } catch(_){}
+      try {
+        if (restoreV) state.localStream.addTrack(restoreV);
+      } catch(e) { console.warn('localStream.addTrack restore failed', e); }
+
+      // 3) remove forwarded system audio
       for (const [pid, sender] of state.screenAudioSenders.entries()) {
         try {
           const entry = state.peers.get(pid);
@@ -410,54 +419,26 @@
       }
       state.screenAudioSenders.clear();
 
-      // stop display tracks
+      // 4) stop display tracks
       if (state.screenStream) { try { state.screenStream.getTracks().forEach(t => t.stop()); } catch(_){ } }
       state.screenStream = null;
       state.isScreenSharing = false;
 
-      // restore stage video
-      if (state.stagePeerId === 'local') {
-        markStageSwitch();
-        refs.stageVideo.srcObject = refs.localVideo.srcObject || null;
+      // 5) restore stage/local preview to localStream (camera)
+      refs.localVideo.srcObject = state.localStream;
+      markStageSwitch();
+      if (typeof applyStage === 'function') {
+        state.stagePeerId = 'local';
+        applyStage('local');
       } else {
-        const entry = state.peers.get(state.stagePeerId);
-        markStageSwitch();
-        refs.stageVideo.srcObject = (entry && entry.video && entry.video.srcObject) ? entry.video.srcObject : null;
+        refs.stageVideo.srcObject = state.localStream;
       }
 
       updateToggleButtons();
+      console.log('[SCREEN] stopped, restored camera track');
     } catch (e) {
       console.error('stopScreenShare error', e);
     }
-  }
-
-  /* Apply stage to peerId */
-  function applyStage(peerId) {
-    state.stagePeerId = peerId;
-    for (const [, entry] of state.peers.entries()) {
-      if (entry.card) entry.card.classList.remove('active-stage');
-    }
-    if (peerId === 'local') {
-      const entry = state.peers.get('local');
-      if (entry && entry.card) entry.card.classList.add('active-stage');
-      if (refs.localVideo.srcObject) refs.stageVideo.srcObject = refs.localVideo.srcObject;
-      const isOwner = !!(state.ownerUid && state.myUid && state.ownerUid === state.myUid);
-      setStageAvatar(state.meName, state.myAvatar, state.myUid, isOwner);
-    } else {
-      const entry = state.peers.get(peerId);
-      if (entry && entry.card) entry.card.classList.add('active-stage');
-      if (entry && entry.video && entry.video.srcObject) refs.stageVideo.srcObject = entry.video.srcObject;
-      const isOwner = !!(state.ownerUid && entry && entry.uid && state.ownerUid === entry.uid);
-      const name = (entry && entry.name) ? entry.name : 'Remote';
-      const avatar = (entry && entry.avatar) ? entry.avatar : '';
-      const uid = (entry && entry.uid) ? entry.uid : '';
-      setStageAvatar(name, avatar, uid, isOwner);
-    }
-  }
-  function setStageAvatar(name, avatar, uid, isOwner) {
-    App.utils.setAvatarElements(name, avatar, uid, refs.stageAvatarImg, refs.stageAvatarInitials);
-    if (refs.stageOwnerBadge) refs.stageOwnerBadge.style.display = isOwner ? '' : 'none';
-    if (refs.stageNameEl) refs.stageNameEl.textContent = name || 'User';
   }
 
   /* WS join flow */
@@ -511,20 +492,13 @@
               entry.isOwner = !!(state.ownerUid && entry.uid && state.ownerUid === entry.uid);
               if (entry.ownerBadge) entry.ownerBadge.style.display = entry.isOwner ? '' : 'none';
             }
-            // if owner by link and no uid provided, adopt from owner_uid
             if (state.isOwnerByLink && !state.myUid && state.ownerUid) {
               state.myUid = String(state.ownerUid);
               state.chatId = state.chatId || state.myUid;
               const localEntry = state.peers.get('local');
               if (localEntry) localEntry.uid = state.myUid;
+              if (App.local && App.local.setLocalAvatar) App.local.setLocalAvatar();
               console.log('[WS] owner-set applied myUid/chatId=', state.myUid);
-            }
-            // refresh stage badge
-            if (state.stagePeerId === 'local') {
-              if (refs.stageOwnerBadge) refs.stageOwnerBadge.style.display = (state.ownerUid === state.myUid) ? '' : 'none';
-            } else {
-              const se = state.peers.get(state.stagePeerId);
-              if (refs.stageOwnerBadge) refs.stageOwnerBadge.style.display = (se && se.uid && state.ownerUid === se.uid) ? '' : 'none';
             }
             break;
           }
@@ -593,6 +567,17 @@
             break;
           }
 
+          case 'record-start': {
+            const ri = document.getElementById('recordIndicator');
+            if (ri) { ri.style.display = 'inline-block'; ri.textContent = 'REC'; }
+            break;
+          }
+          case 'record-stop': {
+            const ri = document.getElementById('recordIndicator');
+            if (ri) ri.style.display = 'none';
+            break;
+          }
+
           default:
             console.debug('WS message:', msg);
         }
@@ -604,7 +589,6 @@
         refs.joinBtn.disabled = false;
         state.connecting = false;
         stopCallTimer(false);
-        // stop screen share if active
         if (state.isScreenSharing) { try { stopScreenShare(); } catch(_){ } }
       };
 
@@ -631,10 +615,9 @@
     if (state.localStream) {
       try { state.localStream.getTracks().forEach(t => t.stop()); } catch(_){}
       state.localStream = null;
+      refs.localVideo.srcObject = null;
+      refs.stageVideo.srcObject = null;
     }
-    if (refs.localVideo) refs.localVideo.srcObject = null;
-    if (refs.stageVideo) refs.stageVideo.srcObject = null;
-
     state.stagePeerId = 'local';
     state.userManuallyChoseStage = false;
     state.joined = false;
@@ -680,16 +663,7 @@
   const rl = document.getElementById('roomLabel'); if (rl) rl.textContent = state.roomId || '(none)';
   updateToggleButtons();
   createLocalTile();
-  // Ensure stage video element
-  if (!refs.stageVideo) {
-    const sv = document.createElement('video');
-    sv.autoplay = true; sv.playsInline = true;
-    sv.style.width = '100%'; sv.style.height = '100%'; sv.style.objectFit = 'contain';
-    if (refs.stageVideoArea) refs.stageVideoArea.appendChild(sv);
-    App.refs.stageVideo = sv;
-  }
   applyStage('local');
 
-  // Export something if needed later
   App.media = { initMedia, applyTrackStates, updateToggleButtons, startScreenShare, stopScreenShare };
 })();
