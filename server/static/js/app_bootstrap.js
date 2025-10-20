@@ -1,6 +1,5 @@
 /* ## App bootstrap, params, Telegram expand, utils */
 (function(){
-  /* Telegram WebApp expand */
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   try {
     if (tg) {
@@ -13,11 +12,27 @@
 
   /* Query params */
   const qs = new URLSearchParams(location.search);
-  const roomParam = qs.get('room') || '';
-  const nameParam = qs.get('n') || '';
-  const uidParam = qs.get('uid') || '';
+  const roomParam   = qs.get('room') || '';
+  const nameParam   = qs.get('n') || '';
+  const uidParam    = qs.get('uid') || '';
   const avatarParam = qs.get('a') || '';
-  const ownerParam = qs.get('owner') || '';
+  const chatParam   = qs.get('chat') || qs.get('chat_id') || '';
+  const ownerParam  = qs.get('owner') || '';
+  const uPacked     = qs.get('u') || '';
+
+  /* Helpers */
+  function base64UrlDecode(s) {
+    try {
+      let b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = b64.length % 4;
+      if (pad) b64 += '='.repeat(4 - pad);
+      const json = atob(b64);
+      return JSON.parse(json);
+    } catch (e) {
+      console.warn('[BOOT] u param decode failed', e);
+      return null;
+    }
+  }
 
   /* UI refs */
   const refs = {
@@ -46,31 +61,42 @@
     screenIndicator: document.getElementById('screenIndicator'),
   };
 
-  /* Telegram user info */
+  /* Telegram init user (WebView) */
   const tgApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-  const initUser = tgApp && tgApp.initDataUnsafe ? (tgApp.initDataUnsafe.user || null) : null;
-  const initUid = initUser && initUser.id ? String(initUser.id) : '';
+  const initUser  = tgApp && tgApp.initDataUnsafe ? (tgApp.initDataUnsafe.user || null) : null;
+  const initUid   = initUser && initUser.id ? String(initUser.id) : '';
   const initPhoto = initUser && initUser.photo_url ? initUser.photo_url : '';
-
-  const meInfo = window.USER_INFO || {};
-  const meName = (() => {
-    const full = [meInfo.first_name || '', meInfo.last_name || ''].join(' ').trim();
-    if (full) return full;
-    if (meInfo.username) return '@' + meInfo.username;
-    if (nameParam) return decodeURIComponent(nameParam);
-    return 'Me';
+  const initName  = (() => {
+    if (!initUser) return '';
+    const fn = initUser.first_name || '';
+    const ln = initUser.last_name || '';
+    const uname = initUser.username ? '@' + initUser.username : '';
+    const full = [fn, ln].join(' ').trim();
+    return full || uname || '';
   })();
-  const myUid = (meInfo.user_id ? String(meInfo.user_id) : '') || uidParam || initUid || '';
-  let myAvatar = (meInfo.avatar_url || '') || (avatarParam ? decodeURIComponent(avatarParam) : '') || initPhoto || '';
 
-  /* State */
+  /* Server-injected user info + fallback from URL u= (base64url JSON) */
+  const injected = (typeof window.USER_INFO === 'object' && window.USER_INFO) ? window.USER_INFO : null;
+  const fromUPacked = uPacked ? base64UrlDecode(uPacked) : null;
+  const meInfo = injected && injected.user_id ? injected : (fromUPacked && fromUPacked.user_id ? fromUPacked : {});
+
+  const meName = (() => {
+    const serverName = ([meInfo.first_name || '', meInfo.last_name || ''].join(' ').trim()) || (meInfo.username ? '@' + meInfo.username : '');
+    return serverName || (nameParam ? decodeURIComponent(nameParam) : '') || initName || 'Me';
+  })();
+
+  const myUid    = (meInfo.user_id ? String(meInfo.user_id) : '') || uidParam || initUid || '';
+  const myAvatar = (meInfo.avatar_url || '') || (avatarParam ? decodeURIComponent(avatarParam) : '') || initPhoto || '';
+
   const state = {
     roomId: roomParam || '',
     meName,
     myUid,
     myAvatar,
+    chatId: (chatParam || ((meInfo.user_id && String(meInfo.user_id)) || '') || myUid || ''),  /* default chat -> myUid */
     isOwnerByLink: (ownerParam === '1'),
     ownerUid: '',
+
     ws: null,
     localStream: null,
     peers: new Map(),
@@ -81,11 +107,10 @@
     stagePeerId: 'local',
     userManuallyChoseStage: false,
 
-    /* Screen share state */
     isScreenSharing: false,
     screenStream: null,
     prevVideoTrack: null,
-    screenAudioSenders: new Map(), /* peerId -> RTCRtpSender */
+    screenAudioSenders: new Map(),
   };
 
   if (state.roomId && refs.roomInput) refs.roomInput.value = state.roomId;
@@ -99,7 +124,14 @@
 
   function getLinkForRoom(id) {
     const base = `${location.origin}${location.pathname}`;
-    return `${base}?room=${encodeURIComponent(id)}`;
+    const params = new URLSearchParams();
+    params.set('room', id || '');
+    if (state.myUid) params.set('uid', state.myUid);
+    if (state.meName && state.meName !== 'Me') params.set('n', state.meName);
+    if (state.myAvatar) params.set('a', state.myAvatar);
+    if (state.chatId) params.set('chat', state.chatId);
+    if (state.isOwnerByLink) params.set('owner', '1');
+    return `${base}?${params.toString()}`;
   }
 
   function getInitials(name) {
@@ -137,18 +169,29 @@
     }
   }
 
-  /* Export namespace */
   window.App = {
     tgApp,
     qs,
     refs,
     state,
-    utils: {
-      wsUrl,
-      getLinkForRoom,
-      getInitials,
-      colorFromString,
-      setAvatarElements,
-    },
+    utils: { wsUrl, getLinkForRoom, getInitials, colorFromString, setAvatarElements },
   };
+
+  try {
+    if (refs.stageNameEl) refs.stageNameEl.textContent = state.meName || 'Me';
+    if (refs.stageAvatarImg || refs.stageAvatarInitials) {
+      setAvatarElements(state.meName, state.myAvatar, state.myUid, refs.stageAvatarImg, refs.stageAvatarInitials);
+    }
+    if (state.isOwnerByLink && !state.myUid && meInfo && meInfo.user_id) {
+      /* final fallback */
+      state.myUid = String(meInfo.user_id);
+      state.chatId = state.chatId || state.myUid;
+    }
+  } catch(_){}
+
+  console.log('[BOOT] state:', {
+    roomId: state.roomId, myUid: state.myUid, chatId: state.chatId,
+    meName: state.meName, hasAvatar: !!state.myAvatar, ownerLink: state.isOwnerByLink,
+    hasInjectedUser: !!(injected && injected.user_id), hasUPacked: !!fromUPacked
+  });
 })();

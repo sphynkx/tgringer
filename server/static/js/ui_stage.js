@@ -3,7 +3,7 @@
   const App = window.App;
   const { refs, state, utils } = App;
 
-  /* Create video elements */
+  /* Create video elements once */
   const localVideo = document.createElement('video');
   localVideo.autoplay = true;
   localVideo.playsInline = true;
@@ -16,7 +16,7 @@
   stageVideo.style.width = '100%';
   stageVideo.style.height = '100%';
   stageVideo.style.objectFit = 'contain';
-  refs.stageVideoArea.appendChild(stageVideo);
+  if (refs.stageVideoArea) refs.stageVideoArea.appendChild(stageVideo);
 
   /* Expose refs */
   App.refs.localVideo = localVideo;
@@ -30,8 +30,8 @@
   }
   function setStageAvatar(name, avatar, uid, isOwner) {
     utils.setAvatarElements(name, avatar, uid, refs.stageAvatarImg, refs.stageAvatarInitials);
-    refs.stageOwnerBadge.style.display = isOwner ? '' : 'none';
-    refs.stageNameEl.textContent = name || 'User';
+    if (refs.stageOwnerBadge) refs.stageOwnerBadge.style.display = isOwner ? '' : 'none';
+    if (refs.stageNameEl) refs.stageNameEl.textContent = name || 'User';
   }
 
   /* Apply stage to peerId */
@@ -58,7 +58,7 @@
     }
   }
 
-  /* Export applyStage and getStageMeta for recording overlay */
+  /* Export applyStage and getStageMeta */
   App.applyStage = applyStage;
   App.getStageMeta = function() {
     if (state.stagePeerId === 'local') {
@@ -72,28 +72,30 @@
   };
 
   /* Stage controls */
-  refs.stageCollapseBtn.onclick = () => {
-    state.userManuallyChoseStage = true;
-    applyStage('local');
-  };
+  if (refs.stageCollapseBtn) {
+    refs.stageCollapseBtn.onclick = () => {
+      state.userManuallyChoseStage = true;
+      applyStage('local');
+    };
+  }
 
   function isFullscreen() { return !!document.fullscreenElement; }
-  function enterFullscreen() { const el = refs.stageVideoArea; if (el.requestFullscreen) el.requestFullscreen(); }
+  function enterFullscreen() { const el = refs.stageVideoArea; if (el && el.requestFullscreen) el.requestFullscreen(); }
   function exitFullscreen() { if (document.exitFullscreen) document.exitFullscreen(); }
   function toggleFullscreen() { if (isFullscreen()) exitFullscreen(); else enterFullscreen(); }
 
-  refs.stageFullscreenBtn.onclick = () => toggleFullscreen();
+  if (refs.stageFullscreenBtn) refs.stageFullscreenBtn.onclick = () => toggleFullscreen();
   document.addEventListener('fullscreenchange', () => {
-    refs.stageFullscreenBtn.textContent = isFullscreen() ? 'Exit FS' : 'Fullscreen';
+    if (refs.stageFullscreenBtn) refs.stageFullscreenBtn.textContent = isFullscreen() ? 'Exit FS' : 'Fullscreen';
   });
 
-  refs.stageVideoArea.onclick = () => {
-    if (isFullscreen()) { exitFullscreen(); return; }
-    if (state.stagePeerId !== 'local') applyStage('local');
-  };
+  if (refs.stageVideoArea) {
+    refs.stageVideoArea.onclick = () => {
+      if (isFullscreen()) { exitFullscreen(); return; }
+      if (state.stagePeerId !== 'local') applyStage('local');
+    };
+  }
 
   /* Expose helpers */
-  App.local = {
-    setLocalAvatar,
-  };
+  App.local = { setLocalAvatar };
 })();

@@ -1,0 +1,109 @@
+/* Base layout */
+body { font-family: system-ui,sans-serif; margin:0; padding:16px; background:#0f1220; color:#e8e8ea; min-height:100vh; display:flex; flex-direction:column; gap:16px; }
+
+header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+
+h2 { margin:0 0 4px 0; font-size:20px; }
+
+small { color:#b0b6c4; }
+
+.ml-12 { margin-left:12px; }
+
+.row-inline { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+
+input, button { padding:8px 12px; border-radius:6px; border:1px solid #2a2f45; background:#0f1220; color:#e8e8ea; }
+
+button { cursor:pointer; }
+
+button.primary { background:#5b8cfe; border:none; font-weight:600; }
+
+button:disabled { opacity:.5; cursor:default; }
+
+.card { background:#1a1f36; padding:12px; border-radius:10px; display:flex; flex-direction:column; gap:8px; }
+
+.controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+#recordIndicator { color:#ff4d4f; font-weight:600; display:none; }
+
+#screenIndicator { color:#ffd166; font-weight:600; display:none; }
+
+
+/* Stage */
+#stageContainer { background:#1a1f36; border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; min-height:300px; }
+
+#stageHeader { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+
+#stageName { font-size:18px; font-weight:600; }
+
+#stageOwnerBadge { font-size:12px; font-weight:600; color:#ffd166; display:none; }
+
+/* Important: maintain 16:9 and avoid vertical crop */
+#stageVideoArea { position:relative; width:100%; aspect-ratio:16 / 9; background:#000; border-radius:12px; overflow:hidden; }
+
+#stageVideoArea video { width:100%; height:100%; object-fit:contain; background:#000; }
+
+
+/* Thumbnails strip */
+#thumbsStripContainer { background:#1a1f36; border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; }
+
+#thumbsStrip { display:flex; gap:12px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
+
+#thumbsStrip::-webkit-scrollbar { height:8px; }
+
+#thumbsStrip::-webkit-scrollbar-track { background:#1a1f36; }
+
+#thumbsStrip::-webkit-scrollbar-thumb { background:#2f3750; border-radius:4px; }
+
+
+/* Thumb card */
+.thumb { background:#141a2b; border:1px solid transparent; border-radius:10px; padding:6px; width:180px; flex:0 0 auto; display:flex; flex-direction:column; gap:6px; cursor:pointer; transition:border .15s; }
+
+.thumb.active-stage { border-color:#5b8cfe; }
+
+.thumb h4 { margin:0; font-size:13px; font-weight:600; display:flex; align-items:center; gap:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.owner-badge { color:#ffd166; font-weight:600; font-size:11px; }
+
+.thumb video { width:100%; height:110px; object-fit:cover; background:#000; border-radius:8px; }
+
+
+/* Avatars */
+.avatar-wrap { width:26px; height:26px; display:flex; align-items:center; justify-content:center; }
+
+.avatar-img { width:26px; height:26px; object-fit:cover; border-radius:50%; display:none; }
+
+.avatar-initials { width:26px; height:26px; border-radius:50%; font-size:11px; font-weight:600; display:none; align-items:center; justify-content:center; color:#0f1220; background:#5b8cfe; letter-spacing:.5px; }
+
+
+/* Options and status */
+.opt { font-size:12px; display:flex; align-items:center; gap:6px; }
+
+#recordStatusRow { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+
+#recordStatus { font-size:12px; color:#b0b6c4; }
+
+/* Owner controls default hidden; JS will show when owner */
+#ownerRecordControls { display:none; gap:8px; flex-wrap:wrap; align-items:center; width:100%; margin-top:8px; }
+
+.owner-controls-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+
+/* Login form */
+.form-card { background:#1a1f36; padding:24px; border-radius:10px; max-width:420px; margin:48px auto; }
+
+.form-card input, .form-card button { padding:10px 14px; border-radius:6px; border:1px solid #2a2f45; background:#0f1220; color:#e8e8ea; margin-bottom:10px; width:100%; }
+
+.form-card button { background:#5b8cfe; border:none; font-weight:700; }
+
+.form-card label { display:block; margin-bottom:4px; }
+
+.form-card h2 { margin-bottom:22px; }
+
+.muted { color:#b0b6c4; font-size:smaller; }
+
+
+/* Responsive */
+@media (max-width:640px){
+  .thumb { width:140px; }
+  .thumb video { height:90px; }
+}
