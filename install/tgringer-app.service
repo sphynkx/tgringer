@@ -6,10 +6,12 @@ After=network.target
 Type=simple
 ##User=www-data
 WorkingDirectory=/var/www/tgringer
-ExecStart=/var/www/tgringer/.venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 91
+ExecStart=/var/www/tgringer/.venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 91 --proxy-headers --forwarded-allow-ips="192.168.7.1" --access-log
 Restart=always
 RestartSec=3
 Environment=PYTHONPATH=/var/www/tgringer
+StandardOutput=append:/var/log/uvicorn/tgringer_app-access.log
+StandardError=append:/var/log/uvicorn/tgringer_app-error.log
 
 [Install]
 WantedBy=multi-user.target

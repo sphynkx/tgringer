@@ -25,6 +25,10 @@ For web app part you need configure some domain. Example of nginx config with pr
         proxy_send_timeout          600;
         proxy_read_timeout          600;
         send_timeout                600;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         }
 
 	}
@@ -77,9 +81,10 @@ mysql -u root -p tgringer < install/schema.sql
 ```
 
 
-### Network
+### Services
 Modify (if need) systemd files `install/tgringer-*.service`, copy them, enable and run:
 ```bash
+mkdir -p /var/log/uvicorn
 cp install/tgringer-*.service /etc/systemd/system
 systemctl daemon-reload
 systemctl enable tgringer-app
